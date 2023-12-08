@@ -9,7 +9,6 @@ import time
 from http import HTTPStatus
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 
-from aioprometheus import MetricsMiddleware
 from aioprometheus.asgi.starlette import metrics
 import fastapi
 import uvicorn
@@ -21,6 +20,8 @@ from fastapi.responses import JSONResponse, StreamingResponse, Response
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.engine.metrics import add_global_metrics_labels
+from vllm.entrypoints.openai.middleware import (
+    ExtendedMetricsMiddleware, OpcRequestIdLoggingMiddleware)
 from vllm.entrypoints.openai.protocol import (
     CompletionRequest, CompletionResponse, CompletionResponseChoice,
     CompletionResponseStreamChoice, CompletionStreamResponse,
@@ -85,8 +86,9 @@ def parse_args():
     return parser.parse_args()
 
 
-app.add_middleware(MetricsMiddleware)  # Trace HTTP server metrics
+app.add_middleware(ExtendedMetricsMiddleware)  # Trace HTTP server metrics
 app.add_route("/metrics", metrics)  # Exposes HTTP metrics
+app.middleware("http")(OpcRequestIdLoggingMiddleware(__name__))  # Extended Logging middleware
 
 
 def create_error_response(status_code: HTTPStatus,
