@@ -1,8 +1,7 @@
-# Adapted from
-# https://github.com/skypilot-org/skypilot/blob/86dc0f6283a335e4aa37b3c10716f90999f48ab6/sky/sky_logging.py
-"""Logging configuration for vLLM."""
 import logging
 import sys
+
+import structlog
 
 _FORMAT = "%(levelname)s %(asctime)s %(filename)s:%(lineno)d] %(message)s"
 _DATE_FORMAT = "%m-%d %H:%M:%S"
@@ -22,7 +21,36 @@ class NewLineFormatter(logging.Formatter):
         return msg
 
 
-_root_logger = logging.getLogger("vllm")
+# structlog's formatter for standard library logging
+structlog_formatter = structlog.stdlib.ProcessorFormatter(
+    processor=structlog.processors.JSONRenderer(),
+    foreign_pre_chain=[
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+    ],
+)
+# Configure structlog
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.CallsiteParameterAdder(
+            {
+                structlog.processors.CallsiteParameter.FILENAME,
+                structlog.processors.CallsiteParameter.FUNC_NAME,
+                structlog.processors.CallsiteParameter.LINENO,
+            }
+        ),
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+_root_logger = logging.getLogger()
 _default_handler = None
 
 
@@ -34,8 +62,7 @@ def _setup_logger():
         _default_handler.flush = sys.stdout.flush  # type: ignore
         _default_handler.setLevel(logging.INFO)
         _root_logger.addHandler(_default_handler)
-    fmt = NewLineFormatter(_FORMAT, datefmt=_DATE_FORMAT)
-    _default_handler.setFormatter(fmt)
+    _default_handler.setFormatter(structlog_formatter)
     # Setting this will avoid the message
     # being propagated to the parent logger.
     _root_logger.propagate = False
@@ -49,8 +76,7 @@ _setup_logger()
 
 def init_logger(name: str):
     # Use the same settings as above for root logger
-    logger = logging.getLogger(name)
+    logger = structlog.get_logger(name)
     logger.setLevel(logging.DEBUG)
-    logger.addHandler(_default_handler)
     logger.propagate = False
     return logger
