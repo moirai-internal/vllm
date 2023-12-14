@@ -2,32 +2,11 @@ import time
 from typing import Any, Awaitable, Callable, Dict
 
 from aioprometheus import Histogram, MetricsMiddleware
-from fastapi import Request
-
-from vllm.logger import init_logger
 
 Scope = Dict[str, Any]
 Message = Dict[str, Any]
 Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
-
-
-class OpcRequestIdLoggingMiddleware:
-    def __init__(self, name: str):
-        self.logger_name = name
-
-    async def __call__(self, request: Request, call_next):
-        logger = init_logger(self.logger_name)
-        opc_request_id = request.headers.get("opc-request-id", "unknown")
-        bound_logger = logger.bind(opc_request_id=opc_request_id)
-        bound_logger.info("Starting request")
-        try:
-            response = await call_next(request)
-            bound_logger.info("Finished request", status_code=response.status_code)
-            return response
-        except Exception as e:
-            bound_logger.error("Exception during request", error=str(e))
-            raise
 
 
 class ExtendedMetricsMiddleware(MetricsMiddleware):
