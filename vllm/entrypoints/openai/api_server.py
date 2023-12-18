@@ -444,6 +444,10 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
         - logit_bias (to be supported by vLLM engine)
     """
 
+    # TODO(changsu): log request fields
+    request_log_record = ", ".join(f"{field}: {value}" for field, value in request.dict().items())
+    logger.info(f"Received request: {request_log_record}")
+
     error_check_ret = await check_model(request)
     if error_check_ret is not None:
         return error_check_ret

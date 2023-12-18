@@ -23,7 +23,7 @@ class NewLineFormatter(logging.Formatter):
 
 # structlog's formatter for standard library logging
 structlog_formatter = structlog.stdlib.ProcessorFormatter(
-    processor=structlog.processors.JSONRenderer(),
+    processor=structlog.dev.ConsoleRenderer(),
     foreign_pre_chain=[
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
