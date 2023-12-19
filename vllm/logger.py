@@ -21,15 +21,24 @@ class NewLineFormatter(logging.Formatter):
         return msg
 
 
+def add_formatted_message(_, __, event_dict):
+    record = event_dict.get("_record")
+    if record:
+        formatted_message = f"{record.levelname} {record.created:.0f} {record.filename}:{record.lineno}] {event_dict.get('event')}"
+        event_dict["msg"] = formatted_message
+    return event_dict
+
+
 # structlog's formatter for standard library logging
 structlog_formatter = structlog.stdlib.ProcessorFormatter(
-    processor=structlog.dev.ConsoleRenderer(),
+    processor=structlog.processors.JSONRenderer(),
     foreign_pre_chain=[
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
     ],
 )
+
 # Configure structlog
 structlog.configure(
     processors=[

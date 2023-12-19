@@ -86,9 +86,9 @@ def parse_args():
     return parser.parse_args()
 
 
+app.middleware("http")(OpcRequestIdLoggingMiddleware(__name__))  # Extended Logging middleware
 app.add_middleware(ExtendedMetricsMiddleware)  # Trace HTTP server metrics
 app.add_route("/metrics", metrics)  # Exposes HTTP metrics
-app.middleware("http")(OpcRequestIdLoggingMiddleware(__name__))  # Extended Logging middleware
 
 
 def create_error_response(status_code: HTTPStatus,

@@ -1,5 +1,6 @@
 import time
 from typing import Any, Awaitable, Callable, Dict
+import json
 
 from aioprometheus import Histogram, MetricsMiddleware
 from fastapi import Request
@@ -18,6 +19,17 @@ class OpcRequestIdLoggingMiddleware:
 
     async def __call__(self, request: Request, call_next):
         logger = init_logger(self.logger_name)
+
+        # Log before api server parses the request
+        body = await request.body()
+        logger.info(f"Request: {request.method} {request.url.path} - Body: {body.decode()}")
+        headers = dict(request.headers)
+        logger.info(f"Headers: {json.dumps(headers, indent=2)}")
+
+        # Workaround: the request body can not be read twice
+        # Reset the body
+        request._body = body
+
         opc_request_id = request.headers.get("opc-request-id", "unknown")
         bound_logger = logger.bind(opc_request_id=opc_request_id)
         bound_logger.info("Starting request")
