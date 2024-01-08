@@ -27,7 +27,7 @@ _default_handler = None
 
 
 def _setup_logger():
-    _root_logger.setLevel(logging.DEBUG)
+    _root_logger.setLevel(logging.INFO)
     global _default_handler
     if _default_handler is None:
         _default_handler = logging.StreamHandler(sys.stdout)
@@ -50,7 +50,7 @@ _setup_logger()
 def init_logger(name: str):
     # Use the same settings as above for root logger
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     logger.addHandler(_default_handler)
     logger.propagate = False
     return logger
