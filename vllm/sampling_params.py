@@ -3,8 +3,12 @@ from enum import IntEnum
 from functools import cached_property
 from typing import Callable, List, Optional, Union
 import torch
+from vllm.logger import init_logger
 
 _SAMPLING_EPS = 1e-5
+_MAX_TEMP = 1e-2
+
+logger = init_logger(__name__)
 
 
 class SamplingType(IntEnum):
@@ -88,34 +92,39 @@ class SamplingParams:
     """
 
     def __init__(
-        self,
-        n: int = 1,
-        best_of: Optional[int] = None,
-        presence_penalty: float = 0.0,
-        frequency_penalty: float = 0.0,
-        repetition_penalty: float = 1.0,
-        temperature: float = 1.0,
-        top_p: float = 1.0,
-        top_k: int = -1,
-        min_p: int = 0.0,
-        use_beam_search: bool = False,
-        length_penalty: float = 1.0,
-        early_stopping: Union[bool, str] = False,
-        stop: Optional[Union[str, List[str]]] = None,
-        stop_token_ids: Optional[List[int]] = None,
-        ignore_eos: bool = False,
-        max_tokens: int = 16,
-        logprobs: Optional[int] = None,
-        prompt_logprobs: Optional[int] = None,
-        skip_special_tokens: bool = True,
-        spaces_between_special_tokens: bool = True,
-        logits_processors: Optional[List[LogitsProcessor]] = None,
+            self,
+            n: int = 1,
+            best_of: Optional[int] = None,
+            presence_penalty: float = 0.0,
+            frequency_penalty: float = 0.0,
+            repetition_penalty: float = 1.0,
+            temperature: float = 1.0,
+            top_p: float = 1.0,
+            top_k: int = -1,
+            min_p: int = 0.0,
+            use_beam_search: bool = False,
+            length_penalty: float = 1.0,
+            early_stopping: Union[bool, str] = False,
+            stop: Optional[Union[str, List[str]]] = None,
+            stop_token_ids: Optional[List[int]] = None,
+            ignore_eos: bool = False,
+            max_tokens: int = 16,
+            logprobs: Optional[int] = None,
+            prompt_logprobs: Optional[int] = None,
+            skip_special_tokens: bool = True,
+            spaces_between_special_tokens: bool = True,
+            logits_processors: Optional[List[LogitsProcessor]] = None,
     ) -> None:
         self.n = n
         self.best_of = best_of if best_of is not None else n
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
         self.repetition_penalty = repetition_penalty
+        if 0 < temperature < _MAX_TEMP:
+            logger.warning(f'temperature {temperature} is less than {_MAX_TEMP}, '
+                           f'which may cause numerical errors nan or inf in tensors. '
+                           f'We will max it out to {_MAX_TEMP}')
+            temperature = max(temperature, _MAX_TEMP)
         self.temperature = temperature
         self.top_p = top_p
         self.top_k = top_k

@@ -63,10 +63,12 @@ class Sampler(nn.Module):
         temperatures = _get_temperatures(sampling_metadata)
         assert len(temperatures) == logits.shape[0]
         if any(t != 1.0 for t in temperatures):
+            # Use float32 for temperature scaling
             t = torch.tensor(temperatures,
-                             dtype=logits.dtype,
+                             dtype=torch.float,
                              device=logits.device)
             # Use in-place division to avoid creating a new tensor.
+            logits = logits.to(torch.float)
             logits.div_(t.unsqueeze(dim=1))
 
         # Apply top-p and top-k truncation.
