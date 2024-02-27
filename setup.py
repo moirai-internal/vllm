@@ -394,7 +394,7 @@ def get_requirements() -> List[str]:
     return requirements
 
 
-package_data = {"vllm": ["py.typed"]}
+package_data = {"vllm": ["py.typed", "default_logging_config.json"]}
 if os.environ.get("VLLM_USE_PRECOMPILED"):
     ext_modules = []
     package_data["vllm"].append("*.so")
