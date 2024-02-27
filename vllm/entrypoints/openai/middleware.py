@@ -12,17 +12,19 @@ async def log_opc_header(request: Request, call_next):
     # Log at the start and end of a POST request
     if request.method == "POST":
         opc_request_id = request.headers.get("opc-request-id", "unknown")
-        logger.info(f"POST Request Start - opc-request-id: {opc_request_id}")
+        logger.bind(opc_request_id=opc_request_id).info(
+            f"POST Request Start - opc-request-id: {opc_request_id}")
 
         try:
             response = await call_next(request)
-            logger.info(
+            logger.bind(opc_request_id=opc_request_id).info(
                 f"POST Request End - opc-request-id: {opc_request_id}, "
                 f"status_code: {response.status_code}")
             return response
         except Exception as e:
-            logger.error(f"Exception during POST request with "
-                         f"opc-request-id: {opc_request_id}, error: {e}")
+            logger.bind(opc_request_id=opc_request_id).error(
+                f"Exception during POST request with "
+                f"opc-request-id: {opc_request_id}, error: {e}")
             raise
 
     # For non-POST requests, just pass through
