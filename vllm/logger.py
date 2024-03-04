@@ -99,10 +99,24 @@ class CustomizeLogger:
         Returns:
             str: The serialized JSON string.
         """
-        error, exception = "", record["exception"]
+        def format_exception(ex):
+            """Format exception to include the entire traceback chain."""
+            lines = []
+            while ex:
+                lines.extend(traceback.format_exception_only(ex.__class__, ex))
+                tb = ex.__traceback__
+                while tb:
+                    lines.extend(traceback.format_tb(tb))
+                    tb = tb.tb_next
+                ex = ex.__cause__ or ex.__context__
+
+            return ''.join(lines)
+
+        exception = record["exception"]
+        error = ""
         if exception:
-            type, ex, tb = exception
-            error = f" {type.__name__}: {ex}\n{''.join(traceback.format_tb(tb))}"
+            _, ex, _ = exception
+            error = f" {ex.__class__.__name__}: {ex}\n{format_exception(ex)}"
 
         subset = {
             "module": record["module"],
