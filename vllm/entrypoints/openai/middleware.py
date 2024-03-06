@@ -36,8 +36,10 @@ class LatencyMetricsMiddleware:
     def __init__(self, app):
         self.app = app
         # Create a Histogram metric for request latency
-        self.request_latency = Histogram("request_latency_seconds",
-                                         "Latency of requests in seconds")
+        self.request_latency = Histogram(
+            "http_request_latency_seconds",
+            "Latency of HTTP requests in seconds",
+            buckets=[1.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0])
 
     async def __call__(self, scope, receive, send):
         start_time = time.time()
