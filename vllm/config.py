@@ -60,6 +60,8 @@ class ModelConfig:
         max_context_len_to_capture: Maximum context len covered by CUDA graphs.
             When a sequence has context length larger than this, we fall back
             to eager mode.
+        embedding_mode: Set the model to embedding mode when the outputs would
+            be embedding vectors instead of tokens.
     """
 
     def __init__(
@@ -79,6 +81,7 @@ class ModelConfig:
         quantization: Optional[str] = None,
         enforce_eager: bool = False,
         max_context_len_to_capture: Optional[int] = None,
+        embedding_mode: Optional[bool] = False,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -93,6 +96,7 @@ class ModelConfig:
         self.quantization = quantization
         self.enforce_eager = enforce_eager
         self.max_context_len_to_capture = max_context_len_to_capture
+        self.embedding_mode = embedding_mode
 
         if os.environ.get("VLLM_USE_MODELSCOPE", "False").lower() == "true":
             # download model from ModelScope hub,
@@ -447,6 +451,7 @@ class SchedulerConfig:
         max_model_len: Maximum length of a sequence (including prompt
             and generated text).
         max_paddings: Maximum number of paddings to be added to a batch.
+        embedding_mode: Whether the running model is for embedding.
     """
 
     def __init__(
@@ -455,6 +460,7 @@ class SchedulerConfig:
         max_num_seqs: int,
         max_model_len: int,
         max_paddings: int,
+        embedding_mode: Optional[bool] = False,
     ) -> None:
         if max_num_batched_tokens is not None:
             self.max_num_batched_tokens = max_num_batched_tokens
@@ -465,6 +471,7 @@ class SchedulerConfig:
         self.max_num_seqs = max_num_seqs
         self.max_model_len = max_model_len
         self.max_paddings = max_paddings
+        self.embedding_mode = embedding_mode
         self._verify_args()
 
     def _verify_args(self) -> None:

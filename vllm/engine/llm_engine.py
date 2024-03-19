@@ -339,6 +339,21 @@ class LLMEngine:
             You may limit the usage of GPU memory
             by adjusting the `gpu_memory_utilization` parameters.
         """
+        # No need to init cache engine or use CUDA graph in embedding mode
+        if self.model_config.embedding_mode:
+            # Get the maximum number of tokens that can be allocated on GPU.
+            max_batch_sizes = self._run_workers(
+                "profile_max_batched_tokens_for_embedding", )
+
+            # TODO(changsu): Check the batch_size settings when tp > 1
+            max_batch_size = max_batch_sizes[0]
+            self.scheduler_config.max_num_batched_tokens = (
+                max_batch_size * self.model_config.max_model_len *
+                self.cache_config.gpu_memory_utilization)
+            logger.info(f"Max batch size: {max_batch_size}")
+
+            return
+
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
         num_blocks = self._run_workers(
             "profile_num_available_blocks",
@@ -576,6 +591,11 @@ class LLMEngine:
 
     def _process_sequence_group_outputs(self, seq_group: SequenceGroup,
                                         outputs: SequenceGroupOutput) -> None:
+
+        if self.model_config.embedding_mode:
+            seq_group.embedding = outputs
+            # TODO(changsu): Finish design
+            # print(1/0)
 
         # Process prompt logprobs
         prompt_logprobs = outputs.prompt_logprobs
@@ -863,16 +883,22 @@ class LLMEngine:
         now = time.monotonic()
 
         # KV Cache Usage in %.
-        num_total_gpu = self.cache_config.num_gpu_blocks
-        num_free_gpu = self.scheduler.block_manager.get_num_free_gpu_blocks()
-        gpu_cache_usage = 1.0 - (num_free_gpu / num_total_gpu)
-
-        num_total_cpu = self.cache_config.num_cpu_blocks
-        cpu_cache_usage = 0.
-        if num_total_cpu > 0:
-            num_free_cpu = self.scheduler.block_manager.get_num_free_cpu_blocks(
+        if not self.model_config.embedding_mode:
+            num_total_gpu = self.cache_config.num_gpu_blocks
+            num_free_gpu = self.scheduler.block_manager.get_num_free_gpu_blocks(
             )
-            cpu_cache_usage = 1.0 - (num_free_cpu / num_total_cpu)
+            gpu_cache_usage = 1.0 - (num_free_gpu / num_total_gpu)
+
+            num_total_cpu = self.cache_config.num_cpu_blocks
+            cpu_cache_usage = 0.
+            if num_total_cpu > 0:
+                num_free_cpu = self.scheduler.block_manager.get_num_free_cpu_blocks(
+                )
+                cpu_cache_usage = 1.0 - (num_free_cpu / num_total_cpu)
+        else:
+            # No need to log KV cache usage in embedding mode
+            gpu_cache_usage = 0
+            cpu_cache_usage = 0
 
         # Scheduler State
         num_running = len(self.scheduler.running)

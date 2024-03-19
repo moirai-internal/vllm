@@ -4,7 +4,7 @@ import time
 from typing import Deque, Dict, Iterable, List, Optional, Tuple, Union, Set
 
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
-from vllm.core.block_manager import AllocStatus, BlockSpaceManager
+from vllm.core.block_manager import AllocStatus, BlockSpaceManager, DummyBlockSpaceManager
 from vllm.core.policy import PolicyFactory
 from vllm.lora.request import LoRARequest
 from vllm.logger import init_logger
@@ -85,17 +85,23 @@ class Scheduler:
         # LoRAs. This should be improved in the future.
         self.lora_config = lora_config
 
-        self.prompt_limit = min(self.scheduler_config.max_model_len,
-                                self.scheduler_config.max_num_batched_tokens)
+        if self.scheduler_config.embedding_mode:
+            # Profile this value if necessary
+            self.prompt_limit = self.scheduler_config.max_num_batched_tokens
+        else:
+            self.prompt_limit = min(
+                self.scheduler_config.max_model_len,
+                self.scheduler_config.max_num_batched_tokens)
 
         # Instantiate the scheduling policy.
         self.policy = PolicyFactory.get_policy(policy_name="fcfs")
-        # Create the block space manager.
-        self.block_manager = BlockSpaceManager(
-            block_size=self.cache_config.block_size,
-            num_gpu_blocks=self.cache_config.num_gpu_blocks,
-            num_cpu_blocks=self.cache_config.num_cpu_blocks,
-            sliding_window=self.cache_config.sliding_window)
+        # Decide on the block manager class based on embedding mode
+        block_manager_class = DummyBlockSpaceManager if self.scheduler_config.embedding_mode else BlockSpaceManager
+        self.block_manager = block_manager_class(
+            block_size=cache_config.block_size,
+            num_gpu_blocks=cache_config.num_gpu_blocks,
+            num_cpu_blocks=cache_config.num_cpu_blocks,
+            sliding_window=cache_config.sliding_window)
 
         # Create the prefix pool to cache the prefixes.
         self.prefix_pool = PrefixPool(self.cache_config.block_size)
@@ -106,6 +112,12 @@ class Scheduler:
         self.running: Deque[SequenceGroup] = deque()
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
+
+        # TODO(changsu): Finish scheduler use_delay
+        # Wrap PervPromptTimeInfo
+        self.prev_time = 0.0
+        self.prev_prompt = False
+        self.last_prompt_latency = 1
 
     @property
     def lora_enabled(self) -> bool:
@@ -183,7 +195,24 @@ class Scheduler:
             # sequence groups are added to the front and the new sequence groups
             # are added to the back.
             leftover_waiting_sequences = deque()
-            while self.waiting:
+
+            if self.prev_prompt:
+                self.last_prompt_latency = now - self.prev_time
+
+            self.prev_time, self.prev_prompt = now, False
+
+            # Delay scheduling prompts to let waiting queue fill up
+            # if self.scheduler_config.use_delay and self.waiting:
+            # TODO(changsu): Finish scheduler use_delay
+            if True and self.waiting:
+                earliest_arrival_time = min(
+                    [e.metrics.arrival_time for e in self.waiting])
+                passed_delay = (now - earliest_arrival_time) > (
+                    1.0 * self.last_prompt_latency) or not self.running
+            else:
+                passed_delay = True
+
+            while passed_delay and self.waiting:
                 seq_group = self.waiting[0]
                 waiting_seqs = seq_group.get_seqs(
                     status=SequenceStatus.WAITING)
@@ -241,6 +270,8 @@ class Scheduler:
                     break
 
                 num_paddings = num_batched_tokens - sum(new_seq_lens)
+                # TODO(changsu): Still batch the sequence even when paddings are
+                # very long. In theory this should not affect embedding
                 if num_paddings > self.scheduler_config.max_paddings:
                     break
                 seq_lens = new_seq_lens
@@ -256,6 +287,7 @@ class Scheduler:
             self.waiting.extendleft(leftover_waiting_sequences)
 
             if scheduled or ignored_seq_groups:
+                self.prev_prompt = True
                 scheduler_outputs = SchedulerOutputs(
                     scheduled_seq_groups=scheduled,
                     prompt_run=True,
