@@ -86,6 +86,7 @@ class ModelConfig:
         enforce_eager: bool = False,
         max_context_len_to_capture: Optional[int] = None,
         max_logprobs: int = 5,
+        embedding_mode: Optional[bool] = False,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -101,6 +102,7 @@ class ModelConfig:
         self.enforce_eager = enforce_eager
         self.max_context_len_to_capture = max_context_len_to_capture
         self.max_logprobs = max_logprobs
+        self.embedding_mode = embedding_mode
 
         if os.environ.get("VLLM_USE_MODELSCOPE", "False").lower() == "true":
             # download model from ModelScope hub,
@@ -409,7 +411,7 @@ class CacheConfig:
 @dataclass
 class TokenizerPoolConfig:
     """Configuration for the tokenizer pool.
-    
+
     Args:
         pool_size: Number of tokenizer workers in the pool.
         pool_type: Type of the pool.
@@ -433,9 +435,9 @@ class TokenizerPoolConfig:
         tokenizer_pool_extra_config: Optional[Union[str, dict]]
     ) -> Optional["TokenizerPoolConfig"]:
         """Create a TokenizerPoolConfig from the given parameters.
-        
+
         If tokenizer_pool_size is 0, return None.
-        
+
         Args:
             tokenizer_pool_size: Number of tokenizer workers in the pool.
             tokenizer_pool_type: Type of the pool.
@@ -542,6 +544,7 @@ class SchedulerConfig:
             prompt latency) before scheduling next prompt.
         enable_chunked_prefill: If True, prefill requests can be chunked based
             on the remaining max_num_batched_tokens.
+        embedding_mode: Whether the running model is for embedding.
     """
 
     def __init__(
@@ -553,6 +556,7 @@ class SchedulerConfig:
         num_lookahead_slots: int = 0,
         delay_factor: float = 0.0,
         enable_chunked_prefill: bool = False,
+        embedding_mode: Optional[bool] = False,
     ) -> None:
         if max_num_batched_tokens is not None:
             self.max_num_batched_tokens = max_num_batched_tokens
@@ -566,6 +570,7 @@ class SchedulerConfig:
         self.num_lookahead_slots = num_lookahead_slots
         self.delay_factor = delay_factor
         self.chunked_prefill_enabled = enable_chunked_prefill
+        self.embedding_mode = embedding_mode
 
         self._verify_args()
 

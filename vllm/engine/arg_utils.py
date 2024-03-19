@@ -63,6 +63,7 @@ class EngineArgs:
     image_feature_size: Optional[int] = None
     scheduler_delay_factor: float = 0.0
     enable_chunked_prefill: bool = False
+    embedding_mode: bool = False
 
     def __post_init__(self):
         if self.tokenizer is None:
@@ -371,6 +372,9 @@ class EngineArgs:
             default=False,
             help='If True, the prefill requests can be chunked based on the '
             'max_num_batched_tokens')
+        parser.add_argument("--embedding-mode",
+                            action="store_true",
+                            help="Enable embedding mode for the server")
         return parser
 
     @classmethod
@@ -393,7 +397,7 @@ class EngineArgs:
             self.dtype, self.seed, self.revision, self.code_revision,
             self.tokenizer_revision, self.max_model_len, self.quantization,
             self.enforce_eager, self.max_context_len_to_capture,
-            self.max_logprobs)
+            self.max_logprobs, self.embedding_mode)
         cache_config = CacheConfig(self.block_size,
                                    self.gpu_memory_utilization,
                                    self.swap_space, self.kv_cache_dtype,
@@ -417,6 +421,7 @@ class EngineArgs:
             num_lookahead_slots=self.num_lookahead_slots,
             delay_factor=self.scheduler_delay_factor,
             enable_chunked_prefill=self.enable_chunked_prefill,
+            embedding_mode=model_config.embedding_mode,
         )
         lora_config = LoRAConfig(
             max_lora_rank=self.max_lora_rank,
