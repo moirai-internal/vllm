@@ -45,7 +45,7 @@ from vllm.model_executor.parallel_utils.parallel_state import (
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.model_executor.weight_utils import (default_weight_loader,
                                               hf_model_weights_iterator)
-from vllm.sequence import SamplerOutput
+from vllm.sequence import SamplerOutput, EmbeddingSequenceGroupOutput
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]
 
@@ -273,6 +273,61 @@ class LlamaModel(nn.Module):
             )
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
+
+    def embedding(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> Optional[SamplerOutput]:
+        outputs = hidden_states[:, -1, :]
+        seq_outputs = []
+        for output in outputs:
+            seq_outputs.append(
+                EmbeddingSequenceGroupOutput(embeddings=output.tolist()))
+        return seq_outputs
+
+    def load_weights(
+        self,
+        model_name_or_path: str,
+        cache_dir: Optional[str] = None,
+        load_format: str = "auto",
+        revision: Optional[str] = None,
+    ):
+        stacked_params_mapping = [
+            # (param_name, shard_name, shard_id)
+            ("qkv_proj", "q_proj", "q"),
+            ("qkv_proj", "k_proj", "k"),
+            ("qkv_proj", "v_proj", "v"),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
+        ]
+        params_dict = dict(self.named_parameters())
+        for name, loaded_weight in hf_model_weights_iterator(
+                model_name_or_path, cache_dir, load_format, revision):
+            if "rotary_emb.inv_freq" in name:
+                continue
+            if "rotary_emb.cos_cached" in name or "rotary_emb.sin_cached" in name:
+                # Models trained using ColossalAI may include these tensors in
+                # the checkpoint. Skip them.
+                continue
+            for param_name, weight_name, shard_id in stacked_params_mapping:
+                if weight_name not in name:
+                    continue
+                name = name.replace(weight_name, param_name)
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                param = params_dict[name]
+                weight_loader = param.weight_loader
+                weight_loader(param, loaded_weight, shard_id)
+                break
+            else:
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                param = params_dict[name]
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
+                weight_loader(param, loaded_weight)
 
 
 class LlamaForCausalLM(nn.Module):

@@ -7,8 +7,8 @@ from vllm.transformers_utils.tokenizer import get_tokenizer
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.entrypoints.openai.protocol import (CompletionRequest,
                                               ChatCompletionRequest,
-                                              ErrorResponse, LogProbs,
-                                              ModelCard, ModelList,
+                                              EmbeddingRequest, ErrorResponse,
+                                              LogProbs, ModelCard, ModelList,
                                               ModelPermission)
 from vllm.lora.request import LoRARequest
 
@@ -145,7 +145,8 @@ class OpenAIServing:
 
     def _validate_prompt_and_tokenize(
             self,
-            request: Union[ChatCompletionRequest, CompletionRequest],
+            request: Union[ChatCompletionRequest, CompletionRequest,
+                           EmbeddingRequest],
             prompt: Optional[str] = None,
             prompt_ids: Optional[List[int]] = None) -> List[int]:
         if not (prompt or prompt_ids):

@@ -10,7 +10,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.llm_engine import LLMEngine
 from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
-from vllm.outputs import RequestOutput
+from vllm.outputs import RequestOutput, EmbeddingRequestOutput
 from vllm.sampling_params import SamplingParams
 
 logger = init_logger(__name__)
@@ -98,7 +98,8 @@ class RequestTracker:
                 stream.put(exc)
 
     def process_request_output(self,
-                               request_output: RequestOutput,
+                               request_output: Union[RequestOutput,
+                                                     EmbeddingRequestOutput],
                                *,
                                verbose: bool = False) -> None:
         """Process a request output from the engine."""

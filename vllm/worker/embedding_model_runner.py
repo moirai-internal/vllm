@@ -602,10 +602,14 @@ class EmbeddingModelRunner:
                 f"Model execution time: {elapsed:.3f}s to embed {input_tokens.shape[0]} sequences of length {input_tokens.shape[1]}"
             )
 
-        output = self.model.sample(
-            hidden_states=hidden_states,
-            sampling_metadata=sampling_metadata,
-        )
+        # Sample the next token.
+        if self.model_config.embedding_mode:
+            output = self.model.embedding(hidden_states)
+        else:
+            output = self.model.sample(
+                hidden_states=hidden_states,
+                sampling_metadata=sampling_metadata,
+            )
         return output
 
     @torch.inference_mode()

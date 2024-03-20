@@ -4,6 +4,8 @@ import enum
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
+import torch
+
 from vllm.block import LogicalTokenBlock
 from vllm.prefix import Prefix
 from vllm.sampling_params import SamplingParams
@@ -276,6 +278,7 @@ class SequenceGroup:
         arrival_time: float,
         lora_request: Optional[LoRARequest] = None,
         prefix: Optional[Prefix] = None,
+        embeddings: Optional[List[float]] = None,
     ) -> None:
         self.request_id = request_id
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
@@ -289,6 +292,7 @@ class SequenceGroup:
         self.prefix: Optional[Prefix] = prefix
         self.prompt_logprobs: Optional[PromptLogprobs] = None
         self.state = SequenceGroupState()
+        self.embeddings = embeddings
 
     @property
     def prompt(self) -> str:
@@ -492,6 +496,25 @@ class SequenceGroupOutput:
                 and self.prompt_logprobs == other.prompt_logprobs)
 
 
+class EmbeddingSequenceGroupOutput:
+    """The model output associated with a embedding sequence group."""
+
+    def __init__(
+        self,
+        embeddings: List[float],
+    ) -> None:
+        self.embeddings = embeddings
+
+    def __repr__(self) -> str:
+        return (f"EmbeddingSequenceGroupOutput("
+                f"embeddings_shape={len(self.embeddings)})")
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, EmbeddingSequenceGroupOutput):
+            return NotImplemented
+        return torch.equal(self.embeddings, other.embeddings)
+
+
 # For each sequence group, we generate a list of SequenceOutput object,
 # each of which contains one possible candidate for the next token.
-SamplerOutput = List[SequenceGroupOutput]
+SamplerOutput = List[Union[SequenceGroupOutput, EmbeddingSequenceGroupOutput]]

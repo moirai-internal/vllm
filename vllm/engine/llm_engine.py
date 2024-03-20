@@ -15,10 +15,11 @@ from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.metrics import StatLogger, Stats
 from vllm.engine.ray_utils import RayWorkerVllm, initialize_cluster, ray
 from vllm.logger import init_logger
-from vllm.outputs import RequestOutput
+from vllm.outputs import RequestOutput, RequestOutputFactory
 from vllm.sampling_params import SamplingParams
-from vllm.sequence import (SamplerOutput, Sequence, SequenceGroup,
-                           SequenceGroupOutput, SequenceOutput, SequenceStatus)
+from vllm.sequence import (EmbeddingSequenceGroupOutput, SamplerOutput,
+                           Sequence, SequenceGroup, SequenceGroupOutput,
+                           SequenceOutput, SequenceStatus)
 from vllm.transformers_utils.tokenizer import (detokenize_incrementally,
                                                TokenizerGroup)
 from vllm.utils import (Counter, set_cuda_visible_devices, get_ip,
@@ -351,7 +352,6 @@ class LLMEngine:
                 max_batch_size * self.model_config.max_model_len *
                 self.cache_config.gpu_memory_utilization)
             logger.info(f"Max batch size: {max_batch_size}")
-
             return
 
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
@@ -589,13 +589,18 @@ class LLMEngine:
                             best_running_seq).eos_token_id))
         return current_worst_score >= highest_attainable_score
 
-    def _process_sequence_group_outputs(self, seq_group: SequenceGroup,
-                                        outputs: SequenceGroupOutput) -> None:
+    def _process_sequence_group_outputs(
+        self, seq_group: SequenceGroup,
+        outputs: Union[SequenceGroupOutput,
+                       EmbeddingSequenceGroupOutput]) -> None:
 
         if self.model_config.embedding_mode:
-            seq_group.embedding = outputs
-            # TODO(changsu): Finish design
-            # print(1/0)
+            seq_group.embeddings = outputs.embeddings
+
+            for seq in seq_group.get_seqs():
+                seq.status = SequenceStatus.FINISHED_STOPPED
+
+            return
 
         # Process prompt logprobs
         prompt_logprobs = outputs.prompt_logprobs
@@ -782,10 +787,10 @@ class LLMEngine:
         request_outputs: List[RequestOutput] = []
         for seq_group in scheduled_seq_groups:
             seq_group.maybe_set_first_token_time(now)
-            request_output = RequestOutput.from_seq_group(seq_group)
+            request_output = RequestOutputFactory.create(seq_group)
             request_outputs.append(request_output)
         for seq_group in scheduler_outputs.ignored_seq_groups:
-            request_output = RequestOutput.from_seq_group(seq_group)
+            request_output = RequestOutputFactory.create(seq_group)
             request_outputs.append(request_output)
 
         # Update prefix state, now all the uncomputed prefixes are computed.
