@@ -246,6 +246,7 @@ if __name__ == "__main__":
                 host=args.host,
                 port=args.port,
                 log_level="info",
+                log_config=None,
                 timeout_keep_alive=TIMEOUT_KEEP_ALIVE,
                 ssl_keyfile=args.ssl_keyfile,
                 ssl_certfile=args.ssl_certfile)
