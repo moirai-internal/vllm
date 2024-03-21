@@ -1,6 +1,8 @@
 from typing import List, Optional
 import time
 
+import torch
+
 from vllm.sequence import (PromptLogprobs, SampleLogprobs, SequenceGroup,
                            SequenceStatus, RequestMetrics)
 from vllm.lora.request import LoRARequest
@@ -61,13 +63,13 @@ class EmbeddingOutput:
 
     def __init__(
         self,
-        embedding: List[float],
+        embedding: torch.Tensor,
     ) -> None:
         self.embedding = embedding
 
     def __repr__(self) -> str:
         return (f"EmbeddingOutput("
-                f"embedding={self.embedding}")
+                f"embedding={self.embedding.shape}")
 
 
 class RequestOutput:

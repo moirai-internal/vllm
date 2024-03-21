@@ -281,8 +281,7 @@ class LlamaModel(nn.Module):
         outputs = hidden_states[:, -1, :]
         seq_outputs = []
         for output in outputs:
-            seq_outputs.append(
-                EmbeddingSequenceGroupOutput(embeddings=output.tolist()))
+            seq_outputs.append(EmbeddingSequenceGroupOutput(embeddings=output))
         return seq_outputs
 
     def load_weights(

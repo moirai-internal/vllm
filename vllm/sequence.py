@@ -268,6 +268,7 @@ class SequenceGroup:
         arrival_time: The arrival time of the request.
         lora_request: LoRA request.
         prefix: The prefix of the prompt of the sequence group.
+        embeddings: The embeddings vector of the prompt of the sequence group.
     """
 
     def __init__(
@@ -278,7 +279,7 @@ class SequenceGroup:
         arrival_time: float,
         lora_request: Optional[LoRARequest] = None,
         prefix: Optional[Prefix] = None,
-        embeddings: Optional[List[float]] = None,
+        embeddings: Optional[torch.Tensor] = None,
     ) -> None:
         self.request_id = request_id
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
@@ -501,13 +502,13 @@ class EmbeddingSequenceGroupOutput:
 
     def __init__(
         self,
-        embeddings: List[float],
+        embeddings: torch.Tensor,
     ) -> None:
         self.embeddings = embeddings
 
     def __repr__(self) -> str:
         return (f"EmbeddingSequenceGroupOutput("
-                f"embeddings_shape={len(self.embeddings)})")
+                f"embeddings_shape={self.embeddings.shape})")
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, EmbeddingSequenceGroupOutput):
