@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import codecs
 import json
+import math
 import time
 from http import HTTPStatus
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
@@ -35,6 +36,8 @@ from vllm.transformers_utils.tokenizer import get_tokenizer
 from vllm.utils import random_uuid
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds
+
+INT32_MIN = -2**31
 
 logger = init_logger(__name__)
 served_model = None
@@ -98,8 +101,9 @@ async def log_opc_header(request: Request, call_next):
 
         try:
             response = await call_next(request)
-            logger.info(f"POST Request End - opc-request-id: {opc_request_id}, "
-                        f"status_code: {response.status_code}")
+            logger.info(
+                f"POST Request End - opc-request-id: {opc_request_id}, "
+                f"status_code: {response.status_code}")
             return response
         except Exception as e:
             logger.error(f"Exception during POST request with "
@@ -224,7 +228,8 @@ def create_logprobs(
 
         if num_output_top_logprobs:
             logprobs.top_logprobs.append({
-                tokenizer.convert_ids_to_tokens(i): p
+                tokenizer.convert_ids_to_tokens(i): (
+                    INT32_MIN if math.isnan(p) or math.isinf(p) else p)
                 for i, p in step_top_logprobs.items()
             } if step_top_logprobs else None)
     return logprobs

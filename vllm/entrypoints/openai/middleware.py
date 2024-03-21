@@ -10,14 +10,13 @@ Send = Callable[[Message], Awaitable[None]]
 
 
 class ExtendedMetricsMiddleware(MetricsMiddleware):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.request_latency = Histogram(
-            "request_latency_seconds",
-            "Latency of HTTP requests in seconds",
-            const_labels=self.const_labels,
-            registry=self.registry
-        )
+        self.request_latency = Histogram("request_latency_seconds",
+                                         "Latency of HTTP requests in seconds",
+                                         const_labels=self.const_labels,
+                                         registry=self.registry)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
