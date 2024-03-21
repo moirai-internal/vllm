@@ -64,7 +64,6 @@ class EmbeddingOutput:
         embedding: List[float],
     ) -> None:
         self.embedding = embedding
-        self.object = object
 
     def __repr__(self) -> str:
         return (f"EmbeddingOutput("

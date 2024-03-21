@@ -598,7 +598,7 @@ class EmbeddingModelRunner:
 
         if self.model_config.embedding_mode:
             elapsed = time.monotonic() - now
-            logger.info(
+            logger.debug(
                 f"Model execution time: {elapsed:.3f}s to embed {input_tokens.shape[0]} sequences of length {input_tokens.shape[1]}"
             )
 
