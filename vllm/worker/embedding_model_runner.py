@@ -604,7 +604,8 @@ class EmbeddingModelRunner:
 
         # Sample the next token.
         if self.model_config.embedding_mode:
-            output = self.model.embedding(hidden_states)
+            output = self.model.embedding(input_ids=input_tokens,
+                                          hidden_states=hidden_states)
         else:
             output = self.model.sample(
                 hidden_states=hidden_states,

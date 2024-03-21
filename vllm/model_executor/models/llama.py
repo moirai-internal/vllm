@@ -274,11 +274,38 @@ class LlamaModel(nn.Module):
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
+    def _last_token_pool(self, last_hidden_states: torch.Tensor,
+                         attention_mask: torch.Tensor) -> torch.Tensor:
+        # Abated from https://huggingface.co/intfloat/e5-mistral-7b-instruct
+        # With only GPU operations
+        left_padding_mask = attention_mask[:, -1].all(dim=0)
+
+        sequence_lengths = attention_mask.sum(dim=1) - 1
+
+        # Prepare indexing for gathering the last valid token based on sequence_lengths.
+        batch_indices = torch.arange(last_hidden_states.size(0),
+                                     device=last_hidden_states.device)
+
+        last_tokens = torch.where(
+            left_padding_mask,
+            last_hidden_states[:,
+                               -1],  # For left-padded sequences, select the last token directly.
+            last_hidden_states[
+                batch_indices,
+                sequence_lengths]  # For others, select based on sequence_lengths.
+        )
+
+        return last_tokens
+
     def embedding(
         self,
+        input_ids: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> Optional[SamplerOutput]:
-        outputs = hidden_states[:, -1, :]
+        # _make_tensor_with_pad uses 0 to pad
+        attention_mask = (input_ids != 0).long()
+        outputs = self._last_token_pool(hidden_states, attention_mask)
+
         seq_outputs = []
         for output in outputs:
             seq_outputs.append(EmbeddingSequenceGroupOutput(embeddings=output))
