@@ -2,9 +2,6 @@ import asyncio
 import time
 from fastapi import Request
 from typing import AsyncIterator, List, Tuple
-
-import torch
-
 from vllm.logger import init_logger
 from vllm.utils import random_uuid
 from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -47,12 +44,6 @@ def parse_prompt_format(prompt) -> Tuple[bool, list]:
     return prompt_is_tokens, prompts
 
 
-def tensor_to_float_list(tensor: torch.Tensor) -> List[float]:
-    """Converts a PyTorch tensor to a list of floats (float16)."""
-    float16_tensor = tensor.to(dtype=torch.float16).cpu()
-    return float16_tensor.numpy().tolist()
-
-
 def request_output_to_embedding_response(
     final_res_batch: List[EmbeddingRequestOutput],
     request_id: str,
@@ -65,18 +56,15 @@ def request_output_to_embedding_response(
         assert final_res is not None
         prompt_token_ids = final_res.prompt_token_ids
 
-        float16_embedding_list = tensor_to_float_list(
-            final_res.outputs.embedding)
-
-        embedding_data = EmeddingResponseData(index=idx,
-                                              embedding=float16_embedding_list)
+        embedding_data = EmeddingResponseData(
+            index=idx, embedding=final_res.outputs.embedding)
         data.append(embedding_data)
 
         num_prompt_tokens += len(prompt_token_ids)
 
     usage = UsageInfo(
         prompt_tokens=num_prompt_tokens,
-        completion_tokens=num_prompt_tokens,
+        total_tokens=num_prompt_tokens,
     )
 
     return EmbeddingResponse(
