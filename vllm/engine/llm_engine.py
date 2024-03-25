@@ -349,7 +349,7 @@ class LLMEngine:
 
             # TODO(changsu): Check the batch_size settings when tp > 1
             max_batch_size = max_batch_sizes[0]
-            self.scheduler_config.max_num_batched_tokens = (
+            self.scheduler_config.max_num_batched_tokens = int(
                 max_batch_size * self.model_config.max_model_len *
                 self.cache_config.gpu_memory_utilization)
             logger.info(f"Max batch size: {max_batch_size}")

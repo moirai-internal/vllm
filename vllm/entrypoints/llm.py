@@ -6,7 +6,7 @@ from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from vllm.lora.request import LoRARequest
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
-from vllm.outputs import RequestOutput
+from vllm.outputs import EmbeddingRequestOutput, RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.utils import Counter
 
@@ -84,6 +84,7 @@ class LLM:
         enforce_eager: bool = False,
         max_context_len_to_capture: int = 8192,
         disable_custom_all_reduce: bool = False,
+        embedding_mode: bool = False,
         **kwargs,
     ) -> None:
         if "disable_log_stats" not in kwargs:
@@ -104,6 +105,7 @@ class LLM:
             enforce_eager=enforce_eager,
             max_context_len_to_capture=max_context_len_to_capture,
             disable_custom_all_reduce=disable_custom_all_reduce,
+            embedding_mode=embedding_mode,
             **kwargs,
         )
         self.llm_engine = LLMEngine.from_engine_args(engine_args)
@@ -127,7 +129,7 @@ class LLM:
         prefix_pos: Optional[Union[int, List[int]]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[LoRARequest] = None,
-    ) -> List[RequestOutput]:
+    ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
         """Generates the completions for the input prompts.
 
         NOTE: This class automatically batches the given prompts, considering
@@ -197,13 +199,15 @@ class LLM:
                                     lora_request=lora_request,
                                     prefix_pos=prefix_pos)
 
-    def _run_engine(self, use_tqdm: bool) -> List[RequestOutput]:
+    def _run_engine(
+            self, use_tqdm: bool
+    ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
         # Initialize tqdm.
         if use_tqdm:
             num_requests = self.llm_engine.get_num_unfinished_requests()
             pbar = tqdm(total=num_requests, desc="Processed prompts")
         # Run the engine.
-        outputs: List[RequestOutput] = []
+        outputs: List[Union[RequestOutput, EmbeddingRequestOutput]] = []
         while self.llm_engine.has_unfinished_requests():
             step_outputs = self.llm_engine.step()
             for output in step_outputs:

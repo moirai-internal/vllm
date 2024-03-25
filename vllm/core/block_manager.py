@@ -382,3 +382,6 @@ class DummyBlockSpaceManager:
 
     def reset(self) -> None:
         pass
+
+    def can_append_slot(self, seq_group: SequenceGroup) -> bool:
+        return True

@@ -596,12 +596,6 @@ class EmbeddingModelRunner:
             input_metadata=input_metadata,
         )
 
-        if self.model_config.embedding_mode:
-            elapsed = time.monotonic() - now
-            logger.debug(
-                f"Model execution time: {elapsed:.3f}s to embed {input_tokens.shape[0]} sequences of length {input_tokens.shape[1]}"
-            )
-
         # Sample the next token.
         if self.model_config.embedding_mode:
             output = self.model.embedding(input_ids=input_tokens,
@@ -611,6 +605,14 @@ class EmbeddingModelRunner:
                 hidden_states=hidden_states,
                 sampling_metadata=sampling_metadata,
             )
+
+        if self.model_config.embedding_mode:
+            elapsed = time.monotonic() - now
+            logger.debug(
+                f"Model execution time: {elapsed:.3f}s to embed "
+                f"{input_tokens.shape[0]} sequences of length {input_tokens.shape[1]}"
+            )
+
         return output
 
     @torch.inference_mode()

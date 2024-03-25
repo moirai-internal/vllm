@@ -39,15 +39,15 @@ def _raise_exception_on_finish(task: asyncio.Task,
 
 
 class AsyncStream:
-    """A stream of RequestOutputs for a request that can be
-    iterated over asynchronously."""
+    """A stream of RequestOutputs or EmbeddingRequestOutputs for a request
+    that can be iterated over asynchronously."""
 
     def __init__(self, request_id: str) -> None:
         self.request_id = request_id
         self._queue = asyncio.Queue()
         self._finished = False
 
-    def put(self, item: RequestOutput) -> None:
+    def put(self, item: Union[RequestOutput, EmbeddingRequestOutput]) -> None:
         if self._finished:
             return
         self._queue.put_nowait(item)
@@ -63,7 +63,7 @@ class AsyncStream:
     def __aiter__(self):
         return self
 
-    async def __anext__(self) -> RequestOutput:
+    async def __anext__(self) -> Union[RequestOutput, EmbeddingRequestOutput]:
         result = await self._queue.get()
         if isinstance(result, Exception):
             raise result
@@ -487,7 +487,7 @@ class AsyncLLMEngine:
         prompt_token_ids: Optional[List[int]] = None,
         lora_request: Optional[LoRARequest] = None,
         prefix_pos: Optional[int] = None,
-    ) -> AsyncIterator[RequestOutput]:
+    ) -> AsyncIterator[Union[RequestOutput, EmbeddingRequestOutput]]:
         """Generate outputs for a request.
 
         Generate outputs for a request. This method is a coroutine. It adds the
@@ -509,8 +509,8 @@ class AsyncLLMEngine:
                 automatic prefix caching in the future.
 
         Yields:
-            The output `RequestOutput` objects from the LLMEngine for the
-            request.
+            The output `RequestOutput` or `EmbeddingRequestOutput` objects
+            from the LLMEngine for the request.
 
         Details:
             - If the engine is not running, start the background loop,
