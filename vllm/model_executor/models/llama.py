@@ -45,7 +45,7 @@ from vllm.model_executor.parallel_utils.parallel_state import (
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.model_executor.weight_utils import (default_weight_loader,
                                               hf_model_weights_iterator)
-from vllm.sequence import SamplerOutput, EmbeddingSequenceGroupOutput
+from vllm.sequence import SamplerOutput
 
 
 class LlamaMLP(nn.Module):
