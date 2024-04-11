@@ -7,7 +7,7 @@ import pytest
 import torch
 from PIL import Image
 from transformers import (AutoModelForCausalLM, AutoProcessor,
-                          LlavaForConditionalGeneration)
+                          LlavaForConditionalGeneration, AutoModel)
 
 from vllm import LLM, SamplingParams
 from vllm.config import TokenizerPoolConfig, VisionLanguageConfig
@@ -129,6 +129,9 @@ _STR_DTYPE_TO_TORCH_DTYPE = {
 _VISION_LANGUAGE_MODELS = {
     "llava-hf/llava-1.5-7b-hf": LlavaForConditionalGeneration,
 }
+_EMBEDDING_MODELS = [
+    "intfloat/e5-mistral-7b-instruct",
+]
 
 
 class HfRunner:
@@ -149,6 +152,11 @@ class HfRunner:
                 trust_remote_code=True,
             ).cuda()
             self.processor = None
+        elif self.model in _EMBEDDING_MODELS:
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                torch_dtype=torch_dtype,
+            ).cuda()
         else:
             self.model = _VISION_LANGUAGE_MODELS[model_name].from_pretrained(
                 model_name,
@@ -269,6 +277,31 @@ class HfRunner:
             all_logprobs.append(seq_logprobs)
         return all_logprobs
 
+    def _last_token_pool(self, last_hidden_states: torch.Tensor,
+                         attention_mask: torch.Tensor) -> torch.Tensor:
+        left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
+        if left_padding:
+            return last_hidden_states[:, -1]
+        else:
+            sequence_lengths = attention_mask.sum(dim=1) - 1
+            batch_size = last_hidden_states.shape[0]
+            return last_hidden_states[
+                torch.arange(batch_size, device=last_hidden_states.device),
+                sequence_lengths]
+
+    def encode(self, prompts: List[str]) -> List[List[torch.Tensor]]:
+        batch_dict = self.tokenizer(prompts,
+                                    return_tensors='pt',
+                                    padding=True,
+                                    truncation=True,
+                                    max_length=4096,
+                                    return_attention_mask=True)
+        batch_dict = {k: v.to("cuda:0") for k, v in batch_dict.items()}
+        outputs = self.model(**batch_dict)
+        embeddings = self._last_token_pool(outputs.last_hidden_state,
+                                           batch_dict['attention_mask'])
+        return embeddings.cpu().tolist()
+
     def __del__(self):
         del self.model
         cleanup()
@@ -293,6 +326,7 @@ class VllmRunner:
         tensor_parallel_size: int = 1,
         block_size: int = 16,
         enable_chunked_prefill: bool = False,
+        embedding_mode: bool = False,
         **kwargs,
     ) -> None:
         self.model = LLM(
@@ -306,6 +340,7 @@ class VllmRunner:
             max_model_len=max_model_len,
             block_size=block_size,
             enable_chunked_prefill=enable_chunked_prefill,
+            embedding_mode=embedding_mode,
             **kwargs,
         )
 
@@ -391,6 +426,15 @@ class VllmRunner:
                                             temperature=0.0,
                                             max_tokens=max_tokens)
         outputs = self.generate(prompts, beam_search_params)
+        return outputs
+
+    def encode(self, prompts: List[str]):
+        req_outputs = self.model.generate(prompts,
+                                          sampling_params=SamplingParams())
+        outputs = []
+        for req_output in req_outputs:
+            embedding = req_output.outputs.embedding
+            outputs.append(embedding)
         return outputs
 
     def __del__(self):
