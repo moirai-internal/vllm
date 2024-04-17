@@ -31,6 +31,23 @@ class InterceptHandler(logging.Handler):
         0: "NOTSET",
     }
 
+    def format_exc_info(self, exc_info):
+        """
+        Formats the exception information from exc_info tuple into a string.
+
+        This function takes the exception information tuple from sys.exc_info,
+        and formats it into a human-readable traceback string.
+
+        Args:
+            exc_info (tuple): A tuple containing (exc_type, exc_value,
+                exc_traceback), which represents the type, value, and traceback
+                of an exception.
+        """
+        exc_type, exc_value, exc_traceback = exc_info
+        tb_lines = traceback.format_exception(exc_type, exc_value,
+                                              exc_traceback)
+        return ''.join(tb_lines)
+
     def emit(self, record: logging.LogRecord):
         """Process the logging record.
 
@@ -51,8 +68,12 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth,
-                   exception=record.exc_info).log(level, record.getMessage())
+        if record.exc_info:
+            formatted_traceback = self.format_exc_info(record.exc_info)
+            message = f"{record.getMessage()}\n{formatted_traceback}"
+        else:
+            message = record.getMessage()
+        logger.opt(depth=depth).log(level, message)
 
 
 class CustomizeLogger:
@@ -135,13 +156,13 @@ class CustomizeLogger:
 
     @classmethod
     def customize_logging(
-            cls,
-            structured_filepath: Path = None,
-            unstructured_filepath: Path = None,
-            level: str = 'INFO',
-            rotation: str = None,
-            retention: str = None,
-            format: str = None,
+        cls,
+        structured_filepath: Path = None,
+        unstructured_filepath: Path = None,
+        level: str = 'INFO',
+        rotation: str = None,
+        retention: str = None,
+        format: str = None,
     ):
         """Customize logging setup based on configuration options.
 
