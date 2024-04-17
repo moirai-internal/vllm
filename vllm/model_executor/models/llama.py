@@ -305,9 +305,10 @@ class LlamaModel(nn.Module):
         # _make_tensor_with_pad uses 0 to pad
         attention_mask = (input_ids != 0).long()
         outputs = self._last_token_pool(hidden_states, attention_mask)
+        outputs_normalized = nn.functional.normalize(outputs, p=2, dim=1)
 
         seq_outputs = []
-        for output in outputs:
+        for output in outputs_normalized:
             seq_outputs.append(
                 EmbeddingSequenceGroupOutput(embeddings=output.tolist()))
         return seq_outputs
