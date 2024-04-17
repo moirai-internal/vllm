@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import math
 from http import HTTPStatus
 from typing import Dict, List, Optional, Union
 from vllm.logger import init_logger
@@ -11,6 +12,8 @@ from vllm.entrypoints.openai.protocol import (CompletionRequest,
                                               ModelCard, ModelList,
                                               ModelPermission)
 from vllm.lora.request import LoRARequest
+
+INT32_MIN = -2**31
 
 logger = init_logger(__name__)
 
@@ -110,7 +113,8 @@ class OpenAIServing:
 
             if num_output_top_logprobs:
                 logprobs.top_logprobs.append({
-                    self.tokenizer.convert_ids_to_tokens(i): p
+                    self.tokenizer.convert_ids_to_tokens(i): (
+                        INT32_MIN if math.isnan(p) or math.isinf(p) else p)
                     for i, p in step_top_logprobs.items()
                 } if step_top_logprobs else None)
         return logprobs
