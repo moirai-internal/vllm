@@ -1,7 +1,7 @@
 import time
 from typing import Iterable, List, Optional, Tuple, Type, Union
 
-from transformers import PreTrainedTokenizer
+from transformers import GenerationConfig, PreTrainedTokenizer
 
 import vllm
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
@@ -27,6 +27,17 @@ from vllm.utils import Counter
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
+
+
+def _load_generation_config_dict(model_config: ModelConfig):
+    try:
+        return GenerationConfig.from_pretrained(
+            model_config.model,
+            revision=model_config.revision,
+        ).to_diff_dict()
+    except OSError:
+        # Not found.
+        return {}
 
 
 class LLMEngine:
@@ -106,6 +117,8 @@ class LLMEngine:
         self._init_tokenizer()
         self.detokenizer = Detokenizer(self.tokenizer)
         self.seq_counter = Counter()
+        self.generation_config_fields = _load_generation_config_dict(
+            model_config)
 
         self.model_executor = executor_class(model_config, cache_config,
                                              parallel_config, scheduler_config,
@@ -331,6 +344,8 @@ class LLMEngine:
         # inject the eos token id into the sampling_params to support min_tokens
         # processing
         sampling_params.eos_token_id = seq.eos_token_id
+        sampling_params.update_from_generation_config(
+            self.generation_config_fields)
 
         # Create the sequence group.
         seq_group = SequenceGroup(request_id, [seq], sampling_params,
