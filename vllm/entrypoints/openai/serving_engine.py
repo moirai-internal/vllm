@@ -1,6 +1,7 @@
 import asyncio
 import json
 from dataclasses import dataclass
+import math
 from http import HTTPStatus
 from typing import Dict, List, Optional, Union
 
@@ -13,6 +14,8 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.sequence import Logprob
 from vllm.transformers_utils.tokenizer import get_tokenizer
+
+INT32_MIN = -2**31
 
 logger = init_logger(__name__)
 
@@ -114,7 +117,8 @@ class OpenAIServing:
 
             if num_output_top_logprobs:
                 logprobs.top_logprobs.append({
-                    p.decoded_token: p.logprob
+                    p.decoded_token: (INT32_MIN if math.isnan(p.logprob)
+                                      or math.isinf(p.logprob) else p.logprob)
                     for i, p in step_top_logprobs.items()
                 } if step_top_logprobs else None)
         return logprobs
