@@ -168,15 +168,16 @@ class OpenAIServing:
             self,
             request: Union[ChatCompletionRequest, CompletionRequest],
             prompt: Optional[str] = None,
-            prompt_ids: Optional[List[int]] = None) -> List[int]:
+            prompt_ids: Optional[List[int]] = None,
+            add_special_tokens: bool = True) -> List[int]:
         if not (prompt or prompt_ids):
             raise ValueError("Either prompt or prompt_ids should be provided.")
-        if (prompt and prompt_ids):
+        if prompt and prompt_ids:
             raise ValueError(
                 "Only one of prompt or prompt_ids should be provided.")
 
         input_ids = prompt_ids if prompt_ids is not None else self.tokenizer(
-            prompt).input_ids
+            prompt, add_special_tokens=add_special_tokens).input_ids
         token_num = len(input_ids)
 
         if request.max_tokens is None:
