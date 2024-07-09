@@ -157,9 +157,6 @@ class OpenAIServing:
 
         input_ids = prompt_ids if prompt_ids is not None else self.tokenizer(
             prompt).input_ids
-        # TODO(changsu): we should not add eos_token_id for specific models here
-        # find a better place to move this
-        input_ids.append(self.tokenizer.eos_token_id)
         token_num = len(input_ids)
 
         if request.max_tokens is None:
