@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from functools import cached_property
 from typing import Any, Callable, Dict, List, Optional, Set, Union
+from vllm.logger import init_logger
 
 import msgspec
 import torch
@@ -16,6 +17,8 @@ logger = init_logger(__name__)
 
 _SAMPLING_EPS = 1e-5
 _MAX_TEMP = 1e-2
+
+logger = init_logger(__name__)
 
 
 class SamplingType(IntEnum):
