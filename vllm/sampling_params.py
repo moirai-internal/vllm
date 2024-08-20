@@ -3,6 +3,7 @@ import copy
 from enum import IntEnum
 from functools import cached_property
 from typing import Any, Callable, Dict, List, Optional, Union
+from vllm.logger import init_logger
 
 import torch
 from pydantic import Field
@@ -13,6 +14,9 @@ from vllm.logger import init_logger
 logger = init_logger(__name__)
 
 _SAMPLING_EPS = 1e-5
+_MAX_TEMP = 1e-2
+
+logger = init_logger(__name__)
 
 
 class SamplingType(IntEnum):
@@ -145,6 +149,12 @@ class SamplingParams:
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
         self.repetition_penalty = repetition_penalty
+        if temperature > 0 and temperature < _MAX_TEMP:
+            logger.warning(
+                f'temperature {temperature} is less than {_MAX_TEMP}, '
+                f'which may cause numerical errors nan or inf in tensors. '
+                f'We will max it out to {_MAX_TEMP}')
+            temperature = max(temperature, _MAX_TEMP)
         self.temperature = temperature
         self.top_p = top_p
         self.top_k = top_k

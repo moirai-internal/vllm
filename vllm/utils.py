@@ -28,7 +28,7 @@ from typing_extensions import ParamSpec
 
 import vllm.envs as envs
 from vllm import _custom_ops as ops
-from vllm.logger import enable_trace_function_call, init_logger
+from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 
@@ -788,7 +788,6 @@ def enable_trace_function_call_for_thread() -> None:
         log_path = os.path.join(tmp_dir, "vllm", get_vllm_instance_id(),
                                 filename)
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        enable_trace_function_call(log_path)
 
 
 def identity(value: T) -> T:
