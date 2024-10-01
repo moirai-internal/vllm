@@ -314,7 +314,8 @@ class OpenAIServingChat(OpenAIServing):
                     out_logprobs = output.logprobs[
                         previous_num_tokens[i]:] if output.logprobs else None
 
-                    if request.logprobs and request.top_logprobs is not None:
+                    if (delta_token_ids and request.logprobs
+                            and request.top_logprobs is not None):
                         assert out_logprobs is not None, (
                             "Did not output logprobs")
                         logprobs = self._create_chat_logprobs(
