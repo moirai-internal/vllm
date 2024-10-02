@@ -531,6 +531,9 @@ class Sequence:
             # Optimization for single decode token case
             # (which is what we have most of the time)
             return self.data._cached_all_token_ids[-1]
+        
+        if num_new_tokens == 0:
+            return []
 
         return self.data._cached_all_token_ids[-num_new_tokens:]
 
