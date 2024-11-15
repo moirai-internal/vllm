@@ -427,10 +427,23 @@ def build_app(args: Namespace) -> FastAPI:
         allow_methods=args.allowed_methods,
         allow_headers=args.allowed_headers,
     )
+    
+    def _handle_pydantic_validation_error(exc: RequestValidationError):
+        """Temp util function to handle pydantic validation errors."""
+        errors = exc.errors()
+        filtered_errors = []
+        for error in errors:
+            if "msg" in error:
+                filtered_errors.append(error["msg"])
+        
+        return filtered_errors or exc
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_, exc):
         chat = app.state.openai_serving_chat
+        
+        exc = _handle_pydantic_validation_error(exc)
+        
         err = chat.create_error_response(message=str(exc))
         return JSONResponse(err.model_dump(),
                             status_code=HTTPStatus.BAD_REQUEST)
