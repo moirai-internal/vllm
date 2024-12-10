@@ -470,7 +470,7 @@ def build_app(args: Namespace) -> FastAPI:
         for error in errors:
             if "msg" in error:
                 filtered_errors.append(error["msg"])
-        
+
         return filtered_errors or exc
 
     @app.exception_handler(RequestValidationError)
@@ -478,7 +478,7 @@ def build_app(args: Namespace) -> FastAPI:
         chat = app.state.openai_serving_chat
 
         exc = _handle_pydantic_validation_error(exc)
-        
+
         err = chat.create_error_response(message=str(exc))
         return JSONResponse(err.model_dump(),
                             status_code=HTTPStatus.BAD_REQUEST)

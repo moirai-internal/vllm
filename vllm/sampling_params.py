@@ -3,8 +3,7 @@ import copy
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 from functools import cached_property
-from typing import Any, Callable, Dict, List, Optional, Set, Union
-from vllm.logger import init_logger
+from typing import Any, Dict, List, Optional, Set, Union
 
 import msgspec
 from pydantic import BaseModel
