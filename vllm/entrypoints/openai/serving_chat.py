@@ -189,12 +189,13 @@ class OpenAIServingChat(OpenAIServing):
                 else:
                     sampling_params = request.to_sampling_params(
                         default_max_tokens)
-
+                
                 self._log_inputs(request_id,
                                  request_prompts[i],
                                  params=sampling_params,
                                  lora_request=lora_request,
-                                 prompt_adapter_request=prompt_adapter_request)
+                                 prompt_adapter_request=prompt_adapter_request,
+                                 num_prompt_tokens=len(engine_prompt["prompt_token_ids"]))
 
                 trace_headers = (None if raw_request is None else await
                                  self._get_trace_headers(raw_request.headers))

@@ -25,8 +25,8 @@ class RequestLogger:
                                BeamSearchParams]],
         lora_request: Optional[LoRARequest],
         prompt_adapter_request: Optional[PromptAdapterRequest],
+        num_prompt_tokens: Optional[int] = 0,
     ) -> None:
-        num_prompt_tokens = len(prompt_token_ids)
         max_log_len = self.max_log_len
         if max_log_len is not None:
             if prompt is not None:
@@ -36,7 +36,7 @@ class RequestLogger:
                 prompt_token_ids = prompt_token_ids[:max_log_len]
 
         logger.info(
-            "Received request %s: prompt: %r, num_prompt_tokens: %d"
+            "Received request %s: prompt: %r, num_prompt_tokens: %d, "
             "params: %s, prompt_token_ids: %s, "
             "lora_request: %s, prompt_adapter_request: %s.", request_id,
             prompt, num_prompt_tokens, params, prompt_token_ids, lora_request,
