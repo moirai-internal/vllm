@@ -1048,16 +1048,19 @@ class AsyncLLMEngine(EngineClient):
             >>> # Process and return the final output
             >>> ...
         """
-        async for output in await self.add_request(
+        try:
+            async for output in await self.add_request(
                 request_id,
                 prompt,
                 sampling_params,
                 lora_request=lora_request,
                 trace_headers=trace_headers,
-                prompt_adapter_request=prompt_adapter_request,
                 priority=priority,
-        ):
-            yield LLMEngine.validate_output(output, RequestOutput)
+            ):
+                yield LLMEngine.validate_output(output, RequestOutput)
+        except asyncio.CancelledError:
+            await self.abort(request_id)
+            raise
 
     async def encode(
         self,

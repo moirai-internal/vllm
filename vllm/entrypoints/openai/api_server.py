@@ -55,6 +55,7 @@ from vllm.entrypoints.openai.serving_engine import BaseModelPath, OpenAIServing
 from vllm.entrypoints.openai.serving_tokenization import (
     OpenAIServingTokenization)
 from vllm.entrypoints.openai.tool_parsers import ToolParserManager
+from vllm.entrypoints.utils import with_cancellation
 from vllm.logger import init_logger
 from vllm.usage.usage_lib import UsageContext
 from vllm.utils import (FlexibleArgumentParser, get_open_zmq_ipc_path,
@@ -295,6 +296,7 @@ async def health(raw_request: Request) -> Response:
 
 
 @router.post("/tokenize")
+@with_cancellation
 async def tokenize(request: TokenizeRequest, raw_request: Request):
     handler = tokenization(raw_request)
 
@@ -309,6 +311,7 @@ async def tokenize(request: TokenizeRequest, raw_request: Request):
 
 
 @router.post("/detokenize")
+@with_cancellation
 async def detokenize(request: DetokenizeRequest, raw_request: Request):
     handler = tokenization(raw_request)
 
@@ -337,6 +340,7 @@ async def show_version():
 
 
 @router.post("/v1/chat/completions")
+@with_cancellation
 async def create_chat_completion(request: ChatCompletionRequest,
                                  raw_request: Request):
     handler = chat(raw_request)
@@ -357,6 +361,7 @@ async def create_chat_completion(request: ChatCompletionRequest,
 
 
 @router.post("/v1/completions")
+@with_cancellation
 async def create_completion(request: CompletionRequest, raw_request: Request):
     handler = completion(raw_request)
     if handler is None:
@@ -374,6 +379,7 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
 
 
 @router.post("/v1/embeddings")
+@with_cancellation
 async def create_embedding(request: EmbeddingRequest, raw_request: Request):
     handler = embedding(raw_request)
     if handler is None:
