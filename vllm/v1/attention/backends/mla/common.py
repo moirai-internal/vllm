@@ -219,6 +219,8 @@ if TYPE_CHECKING:
     from vllm.v1.worker.gpu_input_batch import InputBatch
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
+is_hip = current_platform.is_rocm()
+
 logger = init_logger(__name__)
 
 
@@ -634,6 +636,7 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
         self.o_proj = o_proj
         self.vllm_flash_attn_version = get_flash_attn_version()
 
+        self.triton_fa_func = triton_attention
         # Handle the differences between the flash_attn_varlen from flash_attn
         # and the one from vllm_flash_attn. The former is used on RoCM and the
         # latter has an additional parameter to control FA2 vs FA3
