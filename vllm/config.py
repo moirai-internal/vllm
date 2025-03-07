@@ -2269,6 +2269,7 @@ class LoRAConfig:
     lora_vocab_padding_size: ClassVar[int] = 256
     long_lora_scaling_factors: Optional[tuple[float]] = None
     bias_enabled: bool = False
+    dora_enabled: bool = False
 
     def compute_hash(self) -> str:
         """

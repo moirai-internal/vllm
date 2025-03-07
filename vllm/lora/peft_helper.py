@@ -16,9 +16,9 @@ logger = init_logger(__name__)
 
 @dataclass
 class PEFTHelper:
-    """ 
+    """
     A helper class for PEFT configurations, specifically designed for LoRA.
-    This class handles configuration validation, compatibility checks for 
+    This class handles configuration validation, compatibility checks for
     various LoRA implementations.
     """
 
@@ -42,16 +42,34 @@ class PEFTHelper:
 
     def _validate_features(self) -> List[str]:
         """
-        Check if there are any unsupported LoRA features.
+        Check if there are any unsupported Lora features and validate DoRA configuration.
         """
         error_msg = []
         if self.modules_to_save:
             error_msg.append("vLLM only supports modules_to_save being None.")
+
+        # Validate DoRA configuration
         if self.use_dora:
-            error_msg.append("vLLM does not yet support DoRA.")
+            if self.r <= 0:
+                error_msg.append(
+                    f"Invalid LoRA rank {self.r} for DoRA model, must be positive."
+                )
+            if self.lora_alpha <= 0:
+                error_msg.append(
+                    f"Invalid lora_alpha {self.lora_alpha} for DoRA model, must be positive."
+                )
+
+        # Validate RSLoRA and DoRA combinatorial usage
+        if self.use_rslora and self.use_dora:
+            logger.warning(
+                "Both RSLoRA and DoRA are enabled simultaneously. This might lead to unexpected behavior."
+            )
+
         return error_msg
 
     def __post_init__(self):
+        if self.use_dora:
+            logger.info_once("Loading DoRA weights.")
         if self.use_rslora:
             logger.info_once("Loading LoRA weights trained with rsLoRA.")
             self.vllm_lora_scaling_factor = self.lora_alpha / math.sqrt(self.r)
@@ -100,7 +118,7 @@ class PEFTHelper:
 
     def validate_legal(self, lora_config: LoRAConfig) -> None:
         """
-        Validates the LoRA configuration settings against application 
+        Validates the LoRA configuration settings against application
         constraints and requirements.
         """
         error_msg = self._validate_features()

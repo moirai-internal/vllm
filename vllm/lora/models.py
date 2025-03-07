@@ -42,6 +42,7 @@ _GLOBAL_LORA_ID = 0
 @dataclass
 class LongContextLoRAContext:
     """Context for lora adapters that support long context."""
+
     # The scaling factors to support long context lora fine tuned models.
     scaling_factors: List[float]
     # dimension to apply rotary embedding.
@@ -97,8 +98,8 @@ class LoRAModel(AdapterModel):
 
     @property
     def extra_vocab_size(self) -> int:
-        return max(lora.extra_vocab_size
-                   for lora in self.loras.values()) if self.loras else 0
+        return (max(lora.extra_vocab_size
+                    for lora in self.loras.values()) if self.loras else 0)
 
     def get_lora(self, module_name: str) -> Optional[LoRALayerWeights]:
         """Get LoRA for a given module by name"""
@@ -106,6 +107,7 @@ class LoRAModel(AdapterModel):
 
     # (yard1): TODO see if we can derive target_embedding_padding automatically
     @classmethod
+    # CHLOE TODO: add support for dora
     def from_lora_tensors(
         cls,
         lora_model_id: int,
@@ -122,9 +124,32 @@ class LoRAModel(AdapterModel):
         """Create a LoRAModel from a dictionary of tensors."""
         pin_memory = str(device) == "cpu" and is_pin_memory_available()
         loras: Dict[str, LoRALayerWeights] = {}
+        magnitude_vectors = {}
+
+        # First check if this is a DoRA adapter with use_dora=True
+        dora_enabled = peft_helper.use_dora
+        if dora_enabled:
+            # Identify if there are any magnitude vectors in the tensors
+            magnitude_names = [
+                name for name in tensors
+                if name.endswith('lora_magnitude_vector')
+            ]
+            if not magnitude_names:
+                # If use_dora=True but no magnitude vectors, raise an error
+                raise RuntimeError(
+                    "DoRA adapter with use_dora=True in config, but magnitude parameters are missing "
+                    "in adapter weights. Please check that the adapter file is not corrupted."
+                )
+
+        # Process all tensors
         for tensor_name, tensor in tensors.items():
-            module_name, is_lora_a, is_bias = parse_fine_tuned_lora_name(
+            module_name, is_lora_a, is_bias, is_magnitude = parse_fine_tuned_lora_name(
                 tensor_name, weights_mapper)
+
+            # Store magnitude vectors for later processing
+            if is_magnitude:
+                magnitude_vectors[module_name] = tensor
+                continue
             if module_name not in loras:
                 lora_embeddings_tensor = None
                 if embeddings:
@@ -137,8 +162,8 @@ class LoRAModel(AdapterModel):
                             embedding_modules[embeddings_module]].to(
                                 device=device, dtype=dtype)
                         if pin_memory:
-                            lora_embeddings_tensor = (
-                                lora_embeddings_tensor.pin_memory())
+                            lora_embeddings_tensor = lora_embeddings_tensor.pin_memory(
+                            )
                 loras[module_name] = LoRALayerWeights.from_config(
                     module_name, peft_helper, lora_embeddings_tensor)
 
@@ -159,9 +184,9 @@ class LoRAModel(AdapterModel):
                 loras[module_name].lora_b = tensor.to(device=device,
                                                       dtype=dtype).t()
                 assert embedding_padding_modules is not None
-                if any(name in module_name
-                       for name in embedding_padding_modules
-                       ) and target_embedding_padding is not None:
+                if (any(name in module_name
+                        for name in embedding_padding_modules)
+                        and target_embedding_padding is not None):
                     lora_b = loras[module_name].lora_b
                     assert target_embedding_padding >= lora_b.shape[1]
                     addition = target_embedding_padding - lora_b.shape[1]
@@ -171,13 +196,41 @@ class LoRAModel(AdapterModel):
                     loras[module_name].lora_b = loras[
                         module_name].lora_b.pin_memory()
 
+        # Process magnitude vectors for DoRA if they exist
+        if magnitude_vectors:
+            for module_name, magnitude_tensor in magnitude_vectors.items():
+                if module_name in loras:
+                    # Set magnitude parameter for this module
+                    mag_tensor = magnitude_tensor.to(device=device,
+                                                     dtype=dtype)
+                    if pin_memory:
+                        mag_tensor = mag_tensor.pin_memory()
+                    loras[module_name].magnitude_param = mag_tensor
+                else:
+                    logger.warning(
+                        f"Found magnitude vector for {module_name} but no corresponding LoRA weights"
+                    )
+
+        # If DoRA is enabled, verify all modules have magnitude vectors
+        if dora_enabled:
+            missing_magnitude = [
+                name for name in loras if name not in magnitude_vectors
+            ]
+            if missing_magnitude:
+                raise RuntimeError(
+                    f"DoRA adapter is missing magnitude vectors for modules: {missing_magnitude[:5]}... "
+                    f"(total {len(missing_magnitude)} modules). Please check adapter file consistency."
+                )
+
         for lora in loras.values():
             lora.optimize()
 
-        return cls(lora_model_id,
-                   peft_helper.r,
-                   loras,
-                   scaling_factor=peft_helper.vllm_long_context_scaling_factor)
+        return cls(
+            lora_model_id,
+            peft_helper.r,
+            loras,
+            scaling_factor=peft_helper.vllm_long_context_scaling_factor,
+        )
 
     @classmethod
     def from_local_checkpoint(
@@ -195,7 +248,7 @@ class LoRAModel(AdapterModel):
         weights_mapper: Optional[WeightsMapper] = None,
     ) -> "LoRAModel":
         """Create a LoRAModel from a local checkpoint.
-        
+
         Args:
             lora_dir: The local path that has lora data.
             expected_lora_modules: Name of modules that are expected to be
@@ -229,7 +282,7 @@ class LoRAModel(AdapterModel):
             with safetensors.safe_open(lora_tensor_path,
                                        framework="pt") as f:  # type: ignore
                 for lora_module in f.keys():  # noqa
-                    module_name, _, _ = parse_fine_tuned_lora_name(
+                    module_name, _, _, _ = parse_fine_tuned_lora_name(
                         lora_module, weights_mapper)
                     part_name = module_name.split(".")[-1]
                     if part_name not in expected_lora_modules:
@@ -281,6 +334,7 @@ class LoRAModel(AdapterModel):
                                     map_location=device,
                                     weights_only=True)
 
+        # CHLOE TODO: can pdb/print here to see what each thing should look like; then can try to call this externally w/ some random loras lol
         return cls.from_lora_tensors(
             lora_model_id=get_lora_id()
             if lora_model_id is None else lora_model_id,
@@ -292,7 +346,8 @@ class LoRAModel(AdapterModel):
             target_embedding_padding=target_embedding_padding,
             embedding_modules=embedding_modules,
             embedding_padding_modules=embedding_padding_modules,
-            weights_mapper=weights_mapper)
+            weights_mapper=weights_mapper,
+        )
 
 
 class LoRAModelManager(AdapterModelManager):
@@ -354,7 +409,7 @@ class LoRAModelManager(AdapterModelManager):
         self._last_mapping: Optional[LoRAMapping] = None
         self._create_lora_modules()
         self.model.lora_manager = self
-        self.adapter_type = 'LoRa'
+        self.adapter_type = "LoRa"
 
     @property
     def capacity(self) -> int:
@@ -377,7 +432,9 @@ class LoRAModelManager(AdapterModelManager):
             return False
         first_free_slot = next(
             ((i, lora_id) for i, lora_id in enumerate(self.lora_index_to_id)
-             if lora_id is None), None)
+             if lora_id is None),
+            None,
+        )
         if first_free_slot is None:
             raise ValueError("No free lora slots")
         index, _ = first_free_slot
@@ -392,17 +449,21 @@ class LoRAModelManager(AdapterModelManager):
                 module_lora.optimize()
                 # Bias is not explicitly enabled with the flag enable_lora_bias.
                 bias = module_lora.bias
-                if ((torch.is_tensor(bias) or
-                     (isinstance(bias, Sequence) and any(b is not None
-                                                         for b in bias)))
-                        and not self.lora_config.bias_enabled):
+                if (torch.is_tensor(bias) or
+                    (isinstance(bias, Sequence) and any(
+                        b is not None
+                        for b in bias))) and not self.lora_config.bias_enabled:
                     module_lora.bias = None
                     raise ValueError(
                         f"Adapter bias cannot be used for {module_name}"
                         " without --enable-lora-bias.")
-                module.set_lora(index, module_lora.lora_a, module_lora.lora_b,
-                                module_lora.embeddings_tensor,
-                                module_lora.bias)
+                module.set_lora(
+                    index,
+                    module_lora.lora_a,
+                    module_lora.lora_b,
+                    module_lora.embeddings_tensor,
+                    module_lora.bias,
+                )
             else:
                 module.reset_lora(index)
         return True
@@ -421,7 +482,7 @@ class LoRAModelManager(AdapterModelManager):
         if lora.scaling_factor is None:
             return
 
-        if (lora.scaling_factor not in self.scaling_factor_to_offset):
+        if lora.scaling_factor not in self.scaling_factor_to_offset:
             raise ValueError(f"Long LoRA scaling factor {lora.scaling_factor}"
                              " has not been initialized.")
 
@@ -476,27 +537,38 @@ class LoRAModelManager(AdapterModelManager):
             parts = module_name.split(".")[-1]
             packed_moduled_lst = self.packed_modules_mapping.get(parts, [])
             new_module = replace_submodule(
-                self.model, module_name,
-                from_layer(module, self.lora_slots, self.lora_config,
-                           packed_moduled_lst, self.model.config))
+                self.model,
+                module_name,
+                from_layer(
+                    module,
+                    self.lora_slots,
+                    self.lora_config,
+                    packed_moduled_lst,
+                    self.model.config,
+                ),
+            )
 
             # LinearScalingRotaryEmbeddingWithLoRA is used to handle
             # long context lora. Register relevant metadata.
             if isinstance(new_module, LinearScalingRotaryEmbeddingWithLoRA):
                 self.long_lora_context = LongContextLoRAContext(
                     new_module.scaling_factors, new_module.rotary_dim)
-                self.scaling_factor_to_offset = \
-                    new_module.scaling_factor_to_offset
+                self.scaling_factor_to_offset = new_module.scaling_factor_to_offset
             # (yard1): TODO make this more robust
             if "lm_head" in module_name:
                 logits_processor_module = self.model.get_submodule(
                     "logits_processor")
                 new_module = replace_submodule(
-                    self.model, "logits_processor",
-                    from_layer_logits_processor(logits_processor_module,
-                                                module, self.lora_slots,
-                                                self.lora_config,
-                                                self.model.config))
+                    self.model,
+                    "logits_processor",
+                    from_layer_logits_processor(
+                        logits_processor_module,
+                        module,
+                        self.lora_slots,
+                        self.lora_config,
+                        self.model.config,
+                    ),
+                )
 
             # In some models, especially multimodal ones, layers with the same
             # name may have different types, such as nn.Linear and
@@ -516,11 +588,12 @@ class LoRAModelManager(AdapterModelManager):
         self.modules[module_name] = module
 
     def create_dummy_lora(
-            self,
-            lora_id: int,
-            rank: int,
-            scaling_factor: Optional[float],
-            embedding_modules: Optional[Dict[str, str]] = None) -> LoRAModel:
+        self,
+        lora_id: int,
+        rank: int,
+        scaling_factor: Optional[float],
+        embedding_modules: Optional[Dict[str, str]] = None,
+    ) -> LoRAModel:
         """Create zero-initialized LoRAModel for warmup."""
         model = LoRAModel(lora_id, rank, {}, scaling_factor)
         for module_name, module in self.model.named_modules():
@@ -538,9 +611,9 @@ class LoRAModelManager(AdapterModelManager):
                                  self.lora_config.lora_extra_vocab_size if
                                  hasattr(module.base_layer, "org_vocab_size")
                                  else module.base_layer.weight.shape[1])
-                    output_dim = module.base_layer.embedding_dim if hasattr(
-                        module.base_layer,
-                        "embedding_dim") else module.base_layer.weight.shape[0]
+                    output_dim = (module.base_layer.embedding_dim if hasattr(
+                        module.base_layer, "embedding_dim") else
+                                  module.base_layer.weight.shape[0])
                     embeddings_tensor_dim = (module.base_layer.embedding_dim if
                                              hasattr(module.base_layer,
                                                      "embedding_dim") else
@@ -553,7 +626,8 @@ class LoRAModelManager(AdapterModelManager):
                         module.lora_a_stacked[0].dtype,
                         "cpu",
                         embeddings_tensor_dim=embeddings_tensor_dim,
-                        bias_enabled=bias_enabled)
+                        bias_enabled=bias_enabled,
+                    )
                 else:
                     lora = LoRALayerWeights.create_dummy_lora_weights(
                         module_name,
@@ -595,7 +669,7 @@ class LoRAModelManager(AdapterModelManager):
     def _filter_unsupported_mm_module(self, module_name: str) -> bool:
         """
         Regarding multimodal models, vLLM currently only supports adding LoRA to
-        language model. LoRA for other modules, such as the vision tower, will 
+        language model. LoRA for other modules, such as the vision tower, will
         be filtered out.
         """
         if self.supports_mm:
@@ -649,8 +723,11 @@ class LoRAModelManager(AdapterModelManager):
         logger.debug(
             "Adding lora. Model id: %d, "
             "int id: %d, "
-            "scaling factor: %s", adapter.id, adapter.id,
-            adapter.scaling_factor)
+            "scaling factor: %s",
+            adapter.id,
+            adapter.id,
+            adapter.scaling_factor,
+        )
         return add_adapter(adapter, self._registered_adapters, self.capacity,
                            self._add_adapter)
 
@@ -679,9 +756,15 @@ class LoRALRUCache(AdapterLRUCache[LoRAModel]):
 class LRUCacheLoRAModelManager(LoRAModelManager):
     """A model manager that manages multiple LoRAs with LRU cache."""
 
-    def __init__(self, model: nn.Module, max_num_seqs: int,
-                 max_num_batched_tokens: int, vocab_size: int,
-                 lora_config: LoRAConfig, device: torch.device):
+    def __init__(
+        self,
+        model: nn.Module,
+        max_num_seqs: int,
+        max_num_batched_tokens: int,
+        vocab_size: int,
+        lora_config: LoRAConfig,
+        device: torch.device,
+    ):
         super().__init__(model, max_num_seqs, max_num_batched_tokens,
                          vocab_size, lora_config, device)
         self._registered_adapters: LoRALRUCache = LoRALRUCache(
@@ -698,7 +781,11 @@ class LRUCacheLoRAModelManager(LoRAModelManager):
         logger.debug(
             "Adding lora. Model id: %d, "
             "int id: %d, "
-            "scaling factor: %s", lora.id, lora.id, lora.scaling_factor)
+            "scaling factor: %s",
+            lora.id,
+            lora.id,
+            lora.scaling_factor,
+        )
         if lora.id not in self._registered_adapters:
             self._add_adapter(lora)
             was_added = True
@@ -712,8 +799,8 @@ class LRUCacheLoRAModelManager(LoRAModelManager):
         self,
         lora_id: int,
     ) -> bool:
-        if lora_id not in self._active_adapters and len(
-                self._active_adapters) >= self.lora_slots:
+        if (lora_id not in self._active_adapters
+                and len(self._active_adapters) >= self.lora_slots):
             self._active_adapters.remove_oldest()
         result = super().activate_adapter(lora_id)
         # We always touch to update the LRU cache order
@@ -748,14 +835,15 @@ class LRUCacheLoRAModelManager(LoRAModelManager):
 
 
 def create_lora_manager(
-        model: nn.Module,
-        max_num_seqs: int,
-        max_num_batched_tokens: int,
-        vocab_size: int,
-        lora_config: LoRAConfig,
-        device: torch.device,
-        lora_manager_cls: Type[LoRAModelManager] = LoRAModelManager,
-        **kwargs) -> LoRAModelManager:
+    model: nn.Module,
+    max_num_seqs: int,
+    max_num_batched_tokens: int,
+    vocab_size: int,
+    lora_config: LoRAConfig,
+    device: torch.device,
+    lora_manager_cls: Type[LoRAModelManager] = LoRAModelManager,
+    **kwargs,
+) -> LoRAModelManager:
     """Create a LoRA adapter for a given model."""
     if not hasattr(model, "packed_modules_mapping"):
         raise ValueError(f"Model {type(model)} is not supported for LoRA.")
@@ -766,5 +854,6 @@ def create_lora_manager(
         vocab_size=vocab_size,
         lora_config=lora_config,
         device=device,
-        **kwargs)
+        **kwargs,
+    )
     return lora_manager

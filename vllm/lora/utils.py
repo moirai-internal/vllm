@@ -55,21 +55,32 @@ _all_lora_classes: Set[Type[BaseLayerWithLoRA]] = {
 }
 
 
-def from_layer(layer: nn.Module,
-               max_loras: int,
-               lora_config: LoRAConfig,
-               packed_modules_list: List,
-               model_config: Optional[PretrainedConfig] = None) -> nn.Module:
+def from_layer(
+    layer: nn.Module,
+    max_loras: int,
+    lora_config: LoRAConfig,
+    packed_modules_list: List,
+    model_config: Optional[PretrainedConfig] = None,
+) -> nn.Module:
     for lora_cls in _all_lora_classes:
         # specifying kwargs so they can be easily accessed in decorator
-        if lora_cls.can_replace_layer(source_layer=layer,
-                                      lora_config=lora_config,
-                                      packed_modules_list=packed_modules_list,
-                                      model_config=model_config):
-            instance_layer = lora_cls(layer)
-            instance_layer.create_lora_weights(max_loras, lora_config,
-                                               model_config)
-            return instance_layer
+        if lora_cls.can_replace_layer(
+                source_layer=layer,
+                lora_config=lora_config,
+                packed_modules_list=packed_modules_list,
+                model_config=model_config,
+        ):
+            ret = lora_cls(layer)
+            ret.create_lora_weights(max_loras, lora_config, model_config)
+            return ret
+
+    # The Case for HFCompatibleLinear
+    if (hasattr(layer, "get_lora_class")
+            and layer.__class__.__name__ == "HFCompatibleLinear"):
+        lora_cls = layer.get_lora_class(lora_config.fully_sharded_loras)
+        ret = lora_cls(layer)
+        ret.create_lora_weights(max_loras, lora_config, model_config)
+        return ret
     return layer
 
 
@@ -80,9 +91,13 @@ def from_layer_logits_processor(
     lora_config: LoRAConfig,
     model_config: Optional[PretrainedConfig] = None,
 ) -> LogitsProcessorWithLoRA:
-    ret = LogitsProcessorWithLoRA(layer, lm_head.embedding_dim,
-                                  lm_head.weight.dtype, lm_head.weight.device,
-                                  lm_head.get_sharded_to_full_mapping())
+    ret = LogitsProcessorWithLoRA(
+        layer,
+        lm_head.embedding_dim,
+        lm_head.weight.dtype,
+        lm_head.weight.device,
+        lm_head.get_sharded_to_full_mapping(),
+    )
     ret.create_lora_weights(max_loras, lora_config, model_config)
     return ret
 
@@ -112,6 +127,7 @@ def parse_fine_tuned_lora_name(
             module_name: the name of the module, e.g. model.dense1,
             is_lora_a whether the tensor is lora_a or lora_b.
             is_bias whether the tensor is lora bias.
+            is_magnitude whether the tensor is dora magnitude.
     """
 
     # LoRA weight qualified name always starts with `base_model.model.`,
@@ -127,15 +143,19 @@ def parse_fine_tuned_lora_name(
     if parts[-1] == "weight" and (parts[-2] == "lora_A"
                                   or parts[-2] == "lora_B"):
         new_name = ".".join(parts[2:-2])
-        return new_name, parts[-2] == "lora_A", False
+        return new_name, parts[-2] == "lora_A", False, False
 
     if parts[-1] == "lora_embedding_A" or parts[-1] == "lora_embedding_B":
         new_name = ".".join(parts[2:-1])
-        return new_name, parts[-1] == "lora_embedding_A", False
+        return new_name, parts[-1] == "lora_embedding_A", False, False
 
     if parts[-1] == "bias":
         new_name = ".".join(parts[2:-2])
-        return new_name, False, True
+        return new_name, False, True, False
+
+    if parts[-1] == "lora_magnitude_vector":
+        new_name = ".".join(parts[2:-1])
+        return new_name, False, False, True
 
     raise ValueError(f"{name} is unsupported LoRA weight")
 
@@ -143,9 +163,9 @@ def parse_fine_tuned_lora_name(
 def is_regex_target_modules(load_modules: Union[str, List[str]],
                             expected_lora_modules: List[str]) -> bool:
     """
-    PEFT supports passing `target_modules` in the form of regular expressions, 
-    such as `model.*(q_proj|k_proj|v_proj)$`. This function is mainly used to 
-    determine whether the suffix in the regular expression is present in the 
+    PEFT supports passing `target_modules` in the form of regular expressions,
+    such as `model.*(q_proj|k_proj|v_proj)$`. This function is mainly used to
+    determine whether the suffix in the regular expression is present in the
     `expected_lora_modules`.
     """
 
@@ -211,7 +231,7 @@ def get_adapter_absolute_path(lora_path: str) -> str:
         return lora_path
 
     # If the path starts with ~, expand the user home directory.
-    if lora_path.startswith('~'):
+    if lora_path.startswith("~"):
         return os.path.expanduser(lora_path)
 
     # Check if the expanded relative path exists locally.
@@ -222,8 +242,12 @@ def get_adapter_absolute_path(lora_path: str) -> str:
     try:
         local_snapshot_path = huggingface_hub.snapshot_download(
             repo_id=lora_path)
-    except (HfHubHTTPError, RepositoryNotFoundError, EntryNotFoundError,
-            HFValidationError):
+    except (
+            HfHubHTTPError,
+            RepositoryNotFoundError,
+            EntryNotFoundError,
+            HFValidationError,
+    ):
         # Handle errors that may occur during the download
         # Return original path instead instead of throwing error here
         logger.exception("Error downloading the HuggingFace model")

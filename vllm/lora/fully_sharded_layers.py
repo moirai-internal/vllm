@@ -35,14 +35,16 @@ def _fully_sharded_can_replace(can_replace):
 
 
 def _mcp_apply(x, bias, layer: ColumnParallelLinearWithLoRA):
-    """ 
-    For `ColumnParallelLinearWithLoRA` or classes that inherit from 
+    """
+    For `ColumnParallelLinearWithLoRA` or classes that inherit from
     `ColumnParallelLinearWithLoRA`, they share the same `apply` logic.
     """
     assert (layer.n_slices == len(layer.lora_a_stacked) == len(
         layer.lora_b_stacked) == len(layer.output_slices))
     if layer.lora_bias_stacked is not None:
         assert layer.n_slices == len(layer.lora_bias_stacked)
+    if layer.lora_magnitudes_stacked is not None:
+        assert layer.n_slices == len(layer.lora_magnitudes_stacked)
 
     output = layer.base_layer.quant_method.apply(layer.base_layer, x, bias)
 
@@ -59,13 +61,16 @@ def _mcp_apply(x, bias, layer: ColumnParallelLinearWithLoRA):
 
     layer.punica_wrapper.add_shrink(buffers, x, layer.lora_a_stacked, 1.0)
     buffers = tensor_model_parallel_all_gather(buffers)
-    layer.punica_wrapper.add_expand(output,
-                                    buffers,
-                                    layer.lora_b_stacked,
-                                    layer.lora_bias_stacked,
-                                    layer.output_slices,
-                                    offset_start=0,
-                                    add_input=True)
+    layer.punica_wrapper.add_expand(
+        output,
+        buffers,
+        layer.lora_b_stacked,
+        layer.lora_bias_stacked,
+        layer.lora_magnitudes_stacked,
+        layer.output_slices,
+        offset_start=0,
+        add_input=True,
+    )
 
     output = output.view(*out_orig_shape)
     # now have column partitioned and packed output
@@ -132,14 +137,14 @@ class MergedColumnParallelLinearWithShardedLoRA(
     def slice_lora_a(
         self, lora_a: List[Union[torch.Tensor, None]]
     ) -> List[Union[torch.Tensor, None]]:
-        #NOTE: lora_a contains 2 subloras, and each sublora could be None.
+        # NOTE: lora_a contains 2 subloras, and each sublora could be None.
         output_shard_size = self.lora_a_stacked[0].shape[2]
         output_start_idx = self.tp_rank * output_shard_size
         lora_a = [
-            lora_a[0][:, output_start_idx:output_start_idx +
-                      output_shard_size] if lora_a[0] is not None else None,
-            lora_a[1][:, output_start_idx:output_start_idx +
-                      output_shard_size] if lora_a[1] is not None else None,
+            (lora_a[0][:, output_start_idx:output_start_idx +
+                       output_shard_size] if lora_a[0] is not None else None),
+            (lora_a[1][:, output_start_idx:output_start_idx +
+                       output_shard_size] if lora_a[1] is not None else None),
         ]
         return lora_a
 
@@ -189,9 +194,13 @@ class QKVParallelLinearWithShardedLoRA(QKVParallelLinearWithLoRA):
 
     @classmethod
     @_fully_sharded_can_replace
-    def can_replace_layer(cls, source_layer: nn.Module,
-                          lora_config: LoRAConfig, packed_modules_list: List,
-                          model_config: Optional[PretrainedConfig]) -> bool:
+    def can_replace_layer(
+        cls,
+        source_layer: nn.Module,
+        lora_config: LoRAConfig,
+        packed_modules_list: List,
+        model_config: Optional[PretrainedConfig],
+    ) -> bool:
         # specifying kwargs so they can be easily accessed in decorator
         return super().can_replace_layer(
             source_layer=source_layer,
@@ -204,7 +213,7 @@ class QKVParallelLinearWithShardedLoRA(QKVParallelLinearWithLoRA):
 
 class MergedQKVParallelLinearWithShardedLoRA(MergedQKVParallelLinearWithLoRA):
     """
-    Differs from MergedQKVParallelLinearWithLoRA by slicing the 
+    Differs from MergedQKVParallelLinearWithLoRA by slicing the
     LoRA A's also.
 
     Based on S-LoRA, slicing happens along the rank dim.
@@ -217,12 +226,12 @@ class MergedQKVParallelLinearWithShardedLoRA(MergedQKVParallelLinearWithLoRA):
         shard_size = [self.lora_a_stacked[i].shape[2] for i in range(3)]
         start_idx = [self.tp_rank * shard_size[i] for i in range(3)]
         lora_a = [
-            lora_a[0][:, start_idx[0]:start_idx[0] +
-                      shard_size[0]] if lora_a[0] is not None else None,
-            lora_a[1][:, start_idx[1]:start_idx[1] +
-                      shard_size[1]] if lora_a[1] is not None else None,
-            lora_a[2][:, start_idx[2]:start_idx[2] +
-                      shard_size[2]] if lora_a[2] is not None else None,
+            (lora_a[0][:, start_idx[0]:start_idx[0] +
+                       shard_size[0]] if lora_a[0] is not None else None),
+            (lora_a[1][:, start_idx[1]:start_idx[1] +
+                       shard_size[1]] if lora_a[1] is not None else None),
+            (lora_a[2][:, start_idx[2]:start_idx[2] +
+                       shard_size[2]] if lora_a[2] is not None else None),
         ]
         return lora_a
 
@@ -278,6 +287,17 @@ class RowParallelLinearWithShardedLoRA(RowParallelLinearWithLoRA):
         bias = bias[start_idx:end_idx]
         return bias
 
+    def slice_lora_magnitudes(self, magnitudes: torch.Tensor) -> torch.Tensor:
+        if magnitudes is None:
+            return magnitudes
+        self.lora_magnitudes_stacked = cast(Tuple[torch.Tensor, ...],
+                                            self.lora_magnitudes_stacked)
+        shard_size = self.lora_magnitudes_stacked[0].shape[2]
+        start_idx = self.tp_rank * shard_size
+        end_idx = (self.tp_rank + 1) * shard_size
+        magnitudes = magnitudes[start_idx:end_idx]
+        return magnitudes
+
     def apply(self,
               x: torch.Tensor,
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -309,6 +329,7 @@ class RowParallelLinearWithShardedLoRA(RowParallelLinearWithLoRA):
             buffer,
             self.lora_b_stacked,
             self.lora_bias_stacked,
+            self.lora_magnitudes_stacked,
             self.output_slices,
             offset_start=offset_start,
             add_input=True,

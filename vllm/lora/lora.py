@@ -11,7 +11,7 @@ from vllm.utils import is_pin_memory_available
 
 
 class LoRALayerWeights:
-    """LoRA weights for a layer composed of two low rank matrixes."""
+    """LoRA weights for a layer composed of two low rank matrixes. Now with an optional magnitude parameter."""
 
     def __init__(
         self,
@@ -21,6 +21,7 @@ class LoRALayerWeights:
         lora_a: torch.Tensor,
         lora_b: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
+        magnitude_param: Optional[torch.Tensor] = None,
         embeddings_tensor: Optional[torch.Tensor] = None,
         scaling: Optional[float] = None,
     ) -> None:
@@ -31,7 +32,7 @@ class LoRALayerWeights:
         self.lora_b = lora_b
         self.bias = bias
         self.embeddings_tensor = embeddings_tensor
-
+        self.magnitude_param = magnitude_param
         if scaling is None:
             self.scaling = self.lora_alpha / self.rank
         else:
@@ -59,8 +60,8 @@ class LoRALayerWeights:
 
     @property
     def extra_vocab_size(self) -> int:
-        return self.embeddings_tensor.shape[
-            0] if self.embeddings_tensor is not None else 0
+        return (self.embeddings_tensor.shape[0]
+                if self.embeddings_tensor is not None else 0)
 
     @classmethod
     def from_config(
@@ -69,21 +70,31 @@ class LoRALayerWeights:
         peft_helper: PEFTHelper,
         embeddings_tensor: Optional[torch.Tensor] = None,
     ) -> "LoRALayerWeights":
-        return cls(module_name, peft_helper.r, peft_helper.lora_alpha, None,
-                   None, None, embeddings_tensor,
-                   peft_helper.vllm_lora_scaling_factor)
+        return cls(
+            module_name,
+            peft_helper.r,
+            peft_helper.lora_alpha,
+            None,
+            None,
+            None,
+            None,
+            embeddings_tensor,
+            peft_helper.vllm_lora_scaling_factor,
+        )
 
     @classmethod
     def create_dummy_lora_weights(
-            cls,
-            module_name: str,
-            input_dim: int,
-            output_dim: int,
-            rank: int,
-            dtype: torch.dtype,
-            device: torch.types.Device,
-            embeddings_tensor_dim: Optional[int] = None,
-            bias_enabled: Optional[bool] = False) -> "LoRALayerWeights":
+        cls,
+        module_name: str,
+        input_dim: int,
+        output_dim: int,
+        rank: int,
+        dtype: torch.dtype,
+        device: torch.types.Device,
+        embeddings_tensor_dim: Optional[int] = None,
+        bias_enabled: Optional[bool] = False,
+        dora_enabled: Optional[bool] = False,
+    ) -> "LoRALayerWeights":
         pin_memory = str(device) == "cpu" and is_pin_memory_available()
         lora_a = torch.zeros([input_dim, rank],
                              dtype=dtype,
@@ -100,13 +111,21 @@ class LoRALayerWeights:
                                pin_memory=pin_memory)
         else:
             bias = None
+        if dora_enabled:
+            magnitude_param = torch.zeros([output_dim],
+                                          dtype=dtype,
+                                          device=device,
+                                          pin_memory=pin_memory)
+        else:
+            magnitude_param = None
 
-        embeddings_tensor = torch.rand(
+        embeddings_tensor = (torch.rand(
             10,
             embeddings_tensor_dim,
             dtype=dtype,
             device=device,
-            pin_memory=pin_memory) if embeddings_tensor_dim else None
+            pin_memory=pin_memory,
+        ) if embeddings_tensor_dim else None)
         return cls(
             module_name,
             rank=rank,
@@ -114,6 +133,7 @@ class LoRALayerWeights:
             lora_a=lora_a,
             lora_b=lora_b,
             bias=bias,
+            magnitude_param=magnitude_param,
             embeddings_tensor=embeddings_tensor,
         )
 
@@ -129,6 +149,7 @@ class PackedLoRALayerWeights(LoRALayerWeights):
         lora_a: List[Optional[torch.Tensor]],
         lora_b: List[Optional[torch.Tensor]],
         bias: Optional[List[Optional[torch.Tensor]]] = None,
+        magnitude_params: Optional[List[Optional[torch.Tensor]]] = None,
         scaling: Optional[List[float]] = None,
     ) -> None:
         super().__init__(
@@ -138,6 +159,7 @@ class PackedLoRALayerWeights(LoRALayerWeights):
             lora_a=lora_a,
             lora_b=lora_b,
             bias=bias,
+            magnitude_param=magnitude_params,
             scaling=scaling,  # type: ignore
             embeddings_tensor=None,
         )
@@ -170,10 +192,13 @@ class PackedLoRALayerWeights(LoRALayerWeights):
             [lora.lora_a if lora is not None else None for lora in loras],
             [lora.lora_b if lora is not None else None for lora in loras],
             [lora.bias if lora is not None else None for lora in loras],
-            scaling=[
-                1 if lora is not None else None  # type: ignore
+            [
+                lora.magnitude_param if lora is not None else None
                 for lora in loras
-            ])
+            ],
+            scaling=[1 if lora is not None else None
+                     for lora in loras],  # type: ignore
+        )
         return obj
 
     def optimize(self) -> "PackedLoRALayerWeights":
