@@ -163,6 +163,37 @@ class RobertaClassificationHead(nn.Module):
         return x
 
 
+class RobertaEmbeddingModel(BertEmbeddingModel):
+    """A model that uses Roberta to provide embedding functionalities.
+
+   This class encapsulates the BertModel and provides an interface for
+   embedding operations and customized pooling functions.
+
+   Attributes:
+       model: An instance of BertModel used for forward operations.
+       _pooler: An instance of Pooler used for pooling operations.
+   """
+
+    def _build_model(self,
+                     vllm_config: VllmConfig,
+                     prefix: str = "") -> BertModel:
+        return BertModel(vllm_config=vllm_config,
+                         prefix=prefix,
+                         embedding_class=RobertaEmbedding)
+
+    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
+        weights = self.hf_to_vllm_mapper.apply(weights)
+        # Separate weights in "roberta"-prefixed and all else (not in memory).
+        # For use with models like FacebookAI/roberta-base.
+        bert_weights, task_weights = roberta_task_weights_filter(weights)
+        loaded = self.model.load_weights(bert_weights)
+        if not len(loaded):
+            # Fix for models like `sentence-transformers/stsb-roberta-base-v2`
+            # which use the same architecture, but have no "roberta" prefix.
+            loaded = self.model.load_weights(task_weights)
+        assert len(loaded), "Unable to load RobertaEmbeddingModel"
+
+
 def filter_secondary_weights(
     all_weights: Iterable[Tuple[str, torch.Tensor]],
     secondary_weights: list[str],
@@ -178,16 +209,20 @@ def filter_secondary_weights(
 
 
 class M3SparsePooler(AllPool):
-    """A layer that pools specific information from hidden states.
+    """A pooler that implements M3 sparse pooling
 
     This layer does the following:
-    1. Extracts specific tokens or aggregates data based on pooling method.
-    2. Normalizes output if specified.
-    3. Returns structured results as `PoolerOutput`.
+    1. By default returns dense embeddings.
+    2. If the pooling params "additional_data" contain
+       "sparse_embeddings", return sparse embeddings
 
     Attributes:
-        pooling_type: The type of pooling to use.
-        normalize: Whether to normalize the pooled data.
+        dense_pooler: The default pooler.
+        sparse_linear: the linear module applied to the
+          logits to obtain the token weights
+        bos_token_id and eos_token_id: The special tokens
+          inserted by the tokenizer. These are removed for
+          sparse embeddings
     """
 
     def __init__(self, dense_pooler: Pooler, sparse_linear: nn.Module,
@@ -262,45 +297,30 @@ class M3SparsePooler(AllPool):
             return PoolerOutput(outputs=pooled_outputs)
 
 
-class RobertaEmbeddingModel(BertEmbeddingModel):
-    """A model that uses Roberta to provide embedding functionalities.
+class BgeM3EmbeddingModel(RobertaEmbeddingModel):
+    """A model that extends RobertaEmbeddingModel with sparse embeddings.
 
-   This class encapsulates the BertModel and provides an interface for
-   embedding operations and customized pooling functions.
-
-   Attributes:
-       model: An instance of BertModel used for forward operations.
-       _pooler: An instance of Pooler used for pooling operations.
+   This class supports loading an additional sparse_linear.pt file
+   to create sparse embeddings as described in https://arxiv.org/abs/2402.03216
    """
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
 
-        self.is_m3 = vllm_config.model_config.model == "BAAI/bge-m3"
         self.hidden_size = vllm_config.model_config.hf_config.hidden_size
 
         self.bos_token_id = vllm_config.model_config.hf_config.bos_token_id
         self.eos_token_id = vllm_config.model_config.hf_config.eos_token_id
 
         super().__init__(vllm_config=vllm_config, prefix=prefix)
+        self.secondary_weight_prefix = "sparse_linear."
 
-        self.secondary_weights = []
-        self.secondary_weight_names = []
-
-        if self.is_m3:
-            self.secondary_weight_names.append("sparse_linear.")
-            self.secondary_weights.append(
-                DefaultModelLoader.Source(
-                    model_or_path=vllm_config.model_config.model,
-                    revision=None,
-                    prefix="sparse_linear.",
-                    allow_patterns_overrides=["sparse_linear.pt"]))
-
-    def _build_model(self,
-                     vllm_config: VllmConfig,
-                     prefix: str = "") -> BertModel:
-        return BertModel(vllm_config=vllm_config,
-                         prefix=prefix,
-                         embedding_class=RobertaEmbedding)
+        self.secondary_weights = [
+            DefaultModelLoader.Source(
+                model_or_path=vllm_config.model_config.model,
+                revision=None,
+                prefix=self.secondary_weight_prefix,
+                allow_patterns_overrides=["sparse_linear.pt"])
+        ]
 
     def _build_pooler(self, pooler_config: PoolerConfig) -> Pooler:
         dense_pooler = Pooler.from_config_with_defaults(
@@ -308,33 +328,20 @@ class RobertaEmbeddingModel(BertEmbeddingModel):
             pooling_type=PoolingType.CLS,
             normalize=True,
             softmax=False)
-        if not self.is_m3:
-            return dense_pooler
-        else:
-            self.sparse_linear = nn.Linear(self.hidden_size, 1)
-            return M3SparsePooler(dense_pooler, self.sparse_linear,
-                                  self.bos_token_id, self.eos_token_id)
+        self.sparse_linear = nn.Linear(self.hidden_size, 1)
+        return M3SparsePooler(dense_pooler, self.sparse_linear,
+                              self.bos_token_id, self.eos_token_id)
 
     def load_weights(self, all_weights: Iterable[Tuple[str, torch.Tensor]]):
-
         secondary, weights = filter_secondary_weights(
-            all_weights, self.secondary_weight_names)
+            all_weights, [self.secondary_weight_prefix])
 
-        weights = self.hf_to_vllm_mapper.apply(weights)
-        # Separate weights in "roberta"-prefixed and all else (not in memory).
-        # For use with models like FacebookAI/roberta-base.
-        bert_weights, task_weights = roberta_task_weights_filter(weights)
-        loaded = self.model.load_weights(bert_weights)
-        if not len(loaded):
-            # Fix for models like `sentence-transformers/stsb-roberta-base-v2`
-            # which use the same architecture, but have no "roberta" prefix.
-            loaded = self.model.load_weights(task_weights)
-        assert len(loaded), "Unable to load RobertaEmbeddingModel"
+        super().load_weights(weights)
 
         params_dict = dict(self.named_parameters())
 
         for name, loaded_weight in secondary:
-            if name.startswith("sparse_linear"):
+            if name.startswith(self.secondary_weight_prefix):
                 param = params_dict[name]
                 weight_loader = getattr(param, "weight_loader",
                                         default_weight_loader)
