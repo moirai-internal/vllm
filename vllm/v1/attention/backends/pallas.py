@@ -41,7 +41,7 @@ class PallasAttentionBackend(AttentionBackend):
         num_kv_heads: int,
         head_size: int,
     ) -> tuple[int, ...]:
-        return (num_blocks, block_size, num_kv_heads, head_size)
+        return (num_blocks, block_size, num_kv_heads * head_size)
 
     @staticmethod
     def swap_blocks(
@@ -142,8 +142,8 @@ class PallasAttentionBackendImpl(AttentionImpl):
             query: shape = [num_tokens, num_heads * head_size]
             key: shape = [num_tokens, num_kv_heads * head_size]
             value: shape = [num_tokens, num_kv_heads * head_size]
-            kv_cache = ([num_blocks, block_size, num_kv_heads, head_size], 
-                        [num_blocks, block_size, num_kv_heads, head_size])
+            kv_cache = ([num_blocks, block_size, num_kv_heads * head_size], 
+                        [num_blocks, block_size, num_kv_heads * head_size])
             attn_metadata: Metadata for attention.
         Returns:
             shape = [num_tokens, num_heads * head_size]
@@ -157,29 +157,33 @@ class PallasAttentionBackendImpl(AttentionImpl):
         assert layer._k_scale_float == 1.0 and layer._v_scale_float == 1.0
         num_tokens, hidden_size = query.shape
         query = query.view(num_tokens, self.num_heads, self.head_size)
-        key = key.view(num_tokens, self.num_kv_heads, self.head_size)
-        value = value.view(num_tokens, self.num_kv_heads, self.head_size)
+        # key = key.view(num_tokens, self.num_kv_heads, self.head_size)
+        # value = value.view(num_tokens, self.num_kv_heads, self.head_size)
 
         key_cache, value_cache = kv_cache
         if kv_cache[0].numel() > 0:
             slot_mapping = attn_metadata.slot_mapping
             write_to_kv_cache(key, value, key_cache, value_cache, slot_mapping)
 
-        output = torch.ops.xla.ragged_paged_attention(
-            query,
-            key_cache,
-            value_cache,
-            attn_metadata.context_lens,
-            attn_metadata.block_tables,
-            attn_metadata.query_start_loc,
-            attn_metadata.num_seqs,
-            num_kv_pages_per_block=NUM_KV_PAGES_PER_BLOCK,
-            num_queries_per_block=NUM_QUERIES_PER_BLOCK,
-            vmem_limit_bytes=self.vmem_limit_bytes,
-            use_kernel=True,
-            sm_scale=self.scale)
+        # TODO(xw32): once Jevin changes key_cache and value_cache in the kernel from 
+        # [num_blocks, block_size, num_kv_heads, head_size] to [num_blocks, block_size, num_kv_heads * head_size]
+        # update the torch_xla wheel and start using the updated kernel.
+        # output = torch.ops.xla.ragged_paged_attention(
+        #     query,
+        #     key_cache,
+        #     value_cache,
+        #     attn_metadata.context_lens,
+        #     attn_metadata.block_tables,
+        #     attn_metadata.query_start_loc,
+        #     attn_metadata.num_seqs,
+        #     num_kv_pages_per_block=NUM_KV_PAGES_PER_BLOCK,
+        #     num_queries_per_block=NUM_QUERIES_PER_BLOCK,
+        #     vmem_limit_bytes=self.vmem_limit_bytes,
+        #     use_kernel=True,
+        #     sm_scale=self.scale)
 
-        return output.reshape(num_tokens, hidden_size)
+        # return output.reshape(num_tokens, hidden_size)
+        return query.reshape(num_tokens, hidden_size)
 
 
 def write_to_kv_cache(
@@ -192,17 +196,24 @@ def write_to_kv_cache(
     """ Write the key and values to the KV cache.
 
     Args:
-        key: shape = [num_tokens, num_kv_heads, head_size]
-        value: shape = [num_tokens, num_kv_heads, head_size]
-        k_cache = [num_blocks, block_size, num_kv_heads, head_size]
-        v_cache = [num_blocks, block_size, num_kv_heads, head_size]
+        key: shape = [num_tokens, num_kv_heads * head_size]
+        value: shape = [num_tokens, num_kv_heads * head_size]
+        k_cache = [num_blocks, block_size, num_kv_heads * head_size]
+        v_cache = [num_blocks, block_size, num_kv_heads * head_size]
 
     """
+    # change kv_cache layout from [num_blocks, block_size, num_kv_heads, head_size] to [num_blocks, block_size, num_kv_heads*head_size]
+    # remove the reshape op on kv.
+    # Create slices as as in https://github.com/pytorch/xla/blob/4584a2134259d1f9074ef690315de1d541211f52/torch_xla/experimental/pallas_kernels/kv_insertion.py#L83
     torch.ops.xla.dynamo_set_buffer_donor_(key_cache, True)
     torch.ops.xla.dynamo_set_buffer_donor_(value_cache, True)
 
-    key_cache = key_cache.flatten(0, 1)
-    value_cache = value_cache.flatten(0, 1)
-    slot_mapping = slot_mapping.flatten()
-    key_cache.index_copy_(0, slot_mapping, key)
-    value_cache.index_copy_(0, slot_mapping, value)
+    # key_cache = key_cache.flatten(0, 1)
+    # value_cache = value_cache.flatten(0, 1)
+    # slot_mapping = slot_mapping.flatten()
+    # key_cache.index_copy_(0, slot_mapping, key)
+    # value_cache.index_copy_(0, slot_mapping, value)
+    
+    # TODO(xw32): once the write_to_kv_cache kernel is ready, update the torch_xla wheel and
+    # call it here
+    # torch.ops.xla.kv_insertion(key, value, key_cache, value_cache, slices)
