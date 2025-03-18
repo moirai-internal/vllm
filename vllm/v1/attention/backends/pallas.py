@@ -163,8 +163,8 @@ class PallasAttentionBackendImpl(AttentionImpl):
 
         key_cache, value_cache = kv_cache
         if kv_cache[0].numel() > 0:
-            slot_mapping = attn_metadata.slot_mapping
-            write_to_kv_cache(key, value, key_cache, value_cache, slot_mapping)
+            slot_slices = attn_metadata.slot_slices
+            write_to_kv_cache(key, value, key_cache, value_cache, slot_slices)
 
         # TODO(xw32): once Jevin changes key_cache and value_cache in the kernel from 
         # [num_blocks, block_size, num_kv_heads, head_size] to [num_blocks, block_size, num_kv_heads * head_size]
@@ -192,7 +192,7 @@ def write_to_kv_cache(
     value: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
+    slot_slices: torch.Tensor,
 ) -> None:
     """ Write the key and values to the KV cache.
 
@@ -217,4 +217,4 @@ def write_to_kv_cache(
     
     # TODO(xw32): once the write_to_kv_cache kernel is ready, update the torch_xla wheel and
     # call it here
-    # torch.ops.xla.kv_insertion(key, value, key_cache, value_cache, slices)
+    # torch.ops.xla.kv_insertion(key, value, key_cache, value_cache, slot_slices)
