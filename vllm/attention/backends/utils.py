@@ -2,8 +2,10 @@
 """Attention backend utils"""
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import accumulate
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Type, TypeVar, Union
+from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type,
+                    TypeVar, Union)
 
 import numpy as np
 import torch
@@ -11,6 +13,8 @@ import torch
 from vllm.attention import (AttentionMetadata, AttentionMetadataBuilder,
                             AttentionState)
 from vllm.attention.backends.abstract import AttentionType
+from vllm.attention.layer import Attention
+from vllm.config import ModelConfig, VllmConfig
 from vllm.logger import init_logger
 from vllm.multimodal import MultiModalPlaceholderMap
 from vllm.utils import async_tensor_h2d, make_tensor_with_pad
@@ -33,6 +37,95 @@ _COMPUTE_SLOT_MAPPING_NUMPY_NUMEL = 256
 
 if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUBuilder
+
+
+@dataclass
+class PerLayerParameters:
+    """
+    Currently, FlashInfer backend only support models in which all layers share
+    the same values for the following hyperparameters.
+    """
+
+    window_left: int
+    logits_soft_cap: Optional[float]
+    sm_scale: float
+
+
+def get_per_layer_parameters(vllm_config: VllmConfig, impl_type: type) \
+    -> Dict[str, PerLayerParameters]:
+    """
+    Scan all attention layers and determine some hyperparameters
+    to use during `plan`.
+    """
+
+    layers = vllm_config.compilation_config.static_forward_context
+    per_layer_params: Dict[str, PerLayerParameters] = {}
+
+    print(layers)
+
+    for key, layer in layers.items():
+        assert isinstance(layer, Attention)
+
+        impl = layer.impl
+        assert isinstance(impl, impl_type)
+
+        # Infer hyperparameters from the attention layer
+        window_size = impl.sliding_window
+        window_left = window_size[0] if window_size is not None else -1
+        logits_soft_cap = impl.logits_soft_cap
+        sm_scale = impl.scale
+
+        per_layer_params[key] = PerLayerParameters(window_left,
+                                                   logits_soft_cap, sm_scale)
+
+    return per_layer_params
+
+
+def infer_global_hyperparameters(vllm_config: VllmConfig, impl_type: type)\
+    -> PerLayerParameters:
+    """
+    Currently, FlashInfer backend only support models in which all layers share
+    the same values for the following hyperparameters:
+    - `window_left`
+    - `logits_soft_cap`
+    - `sm_scale`
+
+    So this function asserts that all layers share the same values for these
+    hyperparameters and returns the global values.
+    """
+    per_layer_params = get_per_layer_parameters(vllm_config, impl_type)
+
+    assert len(per_layer_params) > 0, "No attention layers found in the model."
+
+    param_sets = list(per_layer_params.values())
+    global_params = param_sets[0]
+    for params in param_sets:
+        assert params == global_params, (
+            "FlashInfer backend currently only supports models in which all "
+            "layers share the same values for the following hyperparameters: "
+            "`window_left`, `logits_soft_cap`, `sm_scale`.")
+
+    return global_params
+
+
+# TODO: maybe move to a flashinfer specific utils
+def get_fp8_dtype_for_flashinfer(kv_cache_dtype: str) -> torch.dtype:
+    if kv_cache_dtype in ("fp8", "fp8_e4m3"):
+        return torch.float8_e4m3fn
+    elif kv_cache_dtype == "fp8_e5m2":
+        return torch.float8_e5m2
+    else:
+        raise ValueError(f"Unrecognized FP8 dtype: {kv_cache_dtype}")
+
+
+def get_mla_dims(model_config: ModelConfig):
+    # TODO(lucas): see if this makes
+    hf_text_config = model_config.hf_text_config
+    assert hasattr(hf_text_config, "qk_rope_head_dim")
+    assert hasattr(hf_text_config, "kv_lora_rank")
+    qk_rope_head_dim = hf_text_config.qk_rope_head_dim
+    kv_lora_rank = hf_text_config.kv_lora_rank
+    return kv_lora_rank, qk_rope_head_dim
 
 
 def is_block_tables_empty(block_tables: Union[None, Dict]):

@@ -180,6 +180,15 @@ class CudaPlatformBase(Platform):
                              kv_cache_dtype, block_size, use_v1,
                              use_mla) -> str:
         if use_mla:
+            if selected_backend == _Backend.FLASHINFER:
+                if use_v1:
+                    logger.info("Using FlashInfer MLA backend on V1 engine.")
+                    return ("vllm.v1.attention.backends.mla.flashinfer_mla."
+                            "FlashInferMLABackend")
+                else:
+                    logger.info("Using FlashInfer MLA backend.")
+                    return ("vllm.attention.backends.mla.flashinfer_mla."
+                            "FlashInferMLABackend")
             # TODO(lucas): refactor to  be more concise
             #  we should probably consider factoring out V1 here
             if selected_backend == _Backend.TRITON_MLA or block_size != 64:
@@ -189,9 +198,10 @@ class CudaPlatformBase(Platform):
                             "triton_mla.TritonMLABackend")
                 else:
                     logger.info("Using Triton MLA backend.")
-                    return "vllm.attention.backends.triton_mla.TritonMLABackend"
+                    return ("vllm.attention.backends.mla."
+                            "triton_mla.TritonMLABackend")
             else:
-                from vllm.attention.backends.flashmla import (
+                from vllm.attention.backends.mla.flashmla import (
                     is_flashmla_supported)
                 if not is_flashmla_supported()[0]:
                     logger.warning(
@@ -210,7 +220,7 @@ class CudaPlatformBase(Platform):
                                 "flashmla.FlashMLABackend")
                     else:
                         logger.info("Using FlashMLA backend.")
-                        return ("vllm.attention.backends."
+                        return ("vllm.attention.backends.mla."
                                 "flashmla.FlashMLABackend")
         if use_v1:
             logger.info_once("Using Flash Attention backend on V1 engine.")
