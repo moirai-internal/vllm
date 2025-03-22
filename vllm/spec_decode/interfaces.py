@@ -56,9 +56,15 @@ class SpeculativeScores:
     # Optional last hidden states from the scoring model.
     hidden_states: Optional[torch.Tensor] = None
 
+    # Optional prefill hidden states from the scoring model.
+    prefill_hidden_states: Optional[torch.Tensor] = None
+
     # Scoring model may also return logprobs for prompt tokens
     # for each request, when chunked prefill is enabled.
     prompt_logprobs: Optional[List[PromptLogprobs]] = None
+
+    # Optional prefill hidden states for EAGLE
+    prefill_hidden_states: Optional[torch.Tensor] = None
 
     def __repr__(self):
         return (f"SpeculativeScores("
