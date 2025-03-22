@@ -1391,6 +1391,10 @@ class CacheConfig:
     num_cpu_blocks: Optional[int] = field(default=None, init=False)
     """The number of blocks to allocate for CPU memory."""
 
+    # enable cpu offloading in V1
+    enable_cpu_offloading: bool = False
+    offloading_blocks_threshold: int = 1
+
     def compute_hash(self) -> str:
         """
         WARNING: Whenever a new field is added to this config,
@@ -1473,10 +1477,10 @@ class CacheConfig:
         msg = (f"{cpu_memory_usage / GiB_bytes:.2f} GiB out of the "
                f"{total_cpu_memory / GiB_bytes:.2f} GiB total CPU memory "
                "is allocated for the swap space.")
-        if cpu_memory_usage > 0.7 * total_cpu_memory:
-            raise ValueError("Too large swap space. " + msg)
-        elif cpu_memory_usage > 0.4 * total_cpu_memory:
-            logger.warning("Possibly too large swap space. %s", msg)
+        # if cpu_memory_usage > 0.7 * total_cpu_memory:
+        #     raise ValueError("Too large swap space. " + msg)
+        # elif cpu_memory_usage > 0.4 * total_cpu_memory:
+        #     logger.warning("Possibly too large swap space. %s", msg)
 
 
 @config

@@ -387,6 +387,9 @@ class EngineArgs:
     use_tqdm_on_load: bool = LoadConfig.use_tqdm_on_load
     pt_load_map_location: str = LoadConfig.pt_load_map_location
 
+    enable_cpu_offloading: bool = False
+    offloading_blocks_threshold: int = 1
+
     def __post_init__(self):
         # support `EngineArgs(compilation_config={...})`
         # without having to manually construct a
@@ -830,6 +833,20 @@ class EngineArgs:
                             action='store_true',
                             help='Disable logging statistics.')
 
+        parser.add_argument(
+            "--enable-cpu-offloading",
+            action=argparse.BooleanOptionalAction,
+            default=EngineArgs.enable_cpu_offloading,
+            help="Enables cpu offloading.",
+        )
+
+        parser.add_argument(
+            "--offloading-blocks-threshold",
+            type=int,
+            default=EngineArgs.offloading_blocks_threshold,
+            help="When the requested allocation blocks exceeds the threshold, "
+                 "triggering offloading(swap out)")
+
         return parser
 
     @classmethod
@@ -1005,6 +1022,8 @@ class EngineArgs:
             prefix_caching_hash_algo=self.prefix_caching_hash_algo,
             cpu_offload_gb=self.cpu_offload_gb,
             calculate_kv_scales=self.calculate_kv_scales,
+            enable_cpu_offloading=self.enable_cpu_offloading,
+            offloading_blocks_threshold=self.offloading_blocks_threshold,
         )
 
         # Get the current placement group if Ray is initialized and

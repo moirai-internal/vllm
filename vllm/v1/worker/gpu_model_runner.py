@@ -160,6 +160,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Lazy initialization
         # self.model: nn.Module  # Set after load_model
         self.kv_caches: list[torch.Tensor] = []
+        self.cpu_kv_caches: list[torch.Tensor] = []
         # req_id -> (input_id -> encoder_output)
         self.encoder_cache: dict[str, dict[int, torch.Tensor]] = {}
 
@@ -281,6 +282,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                                         device="cpu",
                                         pin_memory=self.pin_memory)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
+
+        # Uninitialized buffer for swapping in/out blocks.
+        # Will be initialized by initialize_kv_cache.
+        self.blocks_to_swap_in_buffer: torch.Tensor
+        self.blocks_to_swap_out_buffer: torch.Tensor
 
     def _update_states(self, scheduler_output: "SchedulerOutput") -> None:
         """Update the cached states and the persistent batch with the scheduler
@@ -1710,6 +1716,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 "supported yet.")
 
         kv_caches: dict[str, torch.Tensor] = {}
+        cpu_kv_caches: dict[str, torch.Tensor] = {}
 
         for kv_cache_group in kv_cache_config.kv_cache_groups:
             kv_cache_spec = kv_cache_group.kv_cache_spec
@@ -1717,6 +1724,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 tensor_config = kv_cache_config.tensors[layer_name]
                 assert tensor_config.size % kv_cache_spec.page_size_bytes == 0
                 num_blocks = tensor_config.size // kv_cache_spec.page_size_bytes
+                num_cpu_blocks = kv_cache_config.num_cpu_blocks
                 # `num_blocks` is the number of blocks the model runner can use.
                 # `kv_cache_config.num_blocks` is the number of blocks that
                 # KVCacheManager may allocate.
@@ -1733,6 +1741,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     kv_caches[layer_name] = torch.zeros(kv_cache_shape,
                                                         dtype=dtype,
                                                         device=self.device)
+
+                    cpu_kv_cache_shape = self.attn_backend.get_kv_cache_shape(
+                        num_cpu_blocks, kv_cache_spec.block_size,
+                        kv_cache_spec.num_kv_heads, kv_cache_spec.head_size)
+                    dtype = kv_cache_spec.dtype
+                    cpu_kv_caches[layer_name] = torch.zeros(cpu_kv_cache_shape,
+                                                            dtype=dtype,
+                                                            device="cpu",
+                                                            pin_memory=True)
                 else:
                     # TODO: add new branches when introducing more types of
                     # KV cache specs.
@@ -1741,7 +1758,21 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         bind_kv_cache(
             kv_caches,
             self.vllm_config.compilation_config.static_forward_context,
-            self.kv_caches)
+            self.kv_caches,
+            cpu_kv_caches,
+            self.cpu_kv_caches,
+        )
+
+        # if enable cpu offloading, CPU blocks must be greater than GPU blocks,
+        # so here we directly use CPU blocks as the maximum number of blocks.
+        self.blocks_to_swap_in_buffer = torch.zeros((kv_cache_config.num_cpu_blocks, 2),
+                                                    dtype=torch.int64,
+                                                    device="cpu",
+                                                    pin_memory=self.pin_memory)
+        self.blocks_to_swap_out_buffer = torch.zeros((kv_cache_config.num_cpu_blocks, 2),
+                                                     dtype=torch.int64,
+                                                     device="cpu",
+                                                     pin_memory=self.pin_memory)
 
     def get_kv_cache_spec(self) -> dict[str, KVCacheSpec]:
         """
@@ -1785,3 +1816,44 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     f"Unknown attention type: {attn_module.attn_type}")
 
         return kv_cache_spec
+
+    def swap_blocks(self, d2h_map: dict[int, int], h2d_map: dict[int, int]):
+        """
+        Swap blocks between CPU and GPU. Both d2h and h2d calls are issued
+        to the same steam with the former issued first.
+        Args:
+            d2h_map: A dictionary mapping GPU block IDs to CPU block IDs.
+            h2d_map: A dictionary mapping CPU block IDs to GPU block IDs.
+        """
+
+        # Host to device, cpu to gpu, swap in
+        if len(h2d_map) != 0:
+            # `blocks_to_swap_in` are cpu tensors.
+            # they contain parameters to launch cudamemcpyasync.
+            blocks_to_swap_in = torch.tensor(list(h2d_map.items()),
+                                             device="cpu",
+                                             dtype=torch.int64).view(-1, 2)
+            swap_in_cnt = blocks_to_swap_in.size(0)
+            # The buffer will be allocated only if the cache engines are initialized
+            if hasattr(self, "blocks_to_swap_in_buffer"):
+                self.blocks_to_swap_in_buffer[:swap_in_cnt] = blocks_to_swap_in
+                blocks_to_swap_in = self.blocks_to_swap_in_buffer[:swap_in_cnt]
+
+            for src_tensor, dst_tensor in zip(self.cpu_kv_caches, self.kv_caches):
+                self.attn_backend.swap_blocks(src_tensor, dst_tensor, blocks_to_swap_in)
+
+        # Device to host, gpu -> cpu, swap out
+        if len(d2h_map) != 0:
+            # `blocks_to_swap_out` are cpu tensors.
+            # they contain parameters to launch cudamemcpyasync.
+            blocks_to_swap_out = torch.tensor(list(d2h_map.items()),
+                                              device="cpu",
+                                              dtype=torch.int64).view(-1, 2)
+            swap_out_cnt = blocks_to_swap_out.size(0)
+            # The buffer will be allocated only if the cache engines are initialized
+            if hasattr(self, "blocks_to_swap_in_buffer"):
+                self.blocks_to_swap_out_buffer[:swap_out_cnt] = blocks_to_swap_out
+                blocks_to_swap_out = self.blocks_to_swap_out_buffer[:swap_out_cnt]
+
+            for src_tensor, dst_tensor in zip(self.kv_caches, self.cpu_kv_caches):
+                self.attn_backend.swap_blocks(src_tensor, dst_tensor, blocks_to_swap_out)
