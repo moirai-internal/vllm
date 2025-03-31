@@ -266,6 +266,7 @@ class ModelConfig:
         enable_sleep_mode: bool = False,
         override_generation_config: Optional[dict[str, Any]] = None,
         model_impl: Union[str, ModelImpl] = ModelImpl.AUTO,
+        multistream_config: Optional["MultiStreamConfig"] = None,
     ) -> None:
         self.model = maybe_model_redirect(model)
         self.tokenizer = maybe_model_redirect(tokenizer)
@@ -431,6 +432,8 @@ class ModelConfig:
 
         self.generation_config = generation_config
         self.override_generation_config = override_generation_config or {}
+
+        self.multistream_config = multistream_config
 
         self._verify_quantization()
         self._verify_cuda_graph()
@@ -777,6 +780,12 @@ class ModelConfig:
 
             if self.use_async_output_proc:
                 self.use_async_output_proc = False
+
+        if  (self.multistream_config is not None and
+                (parallel_config.tensor_parallel_size > 1 and not parallel_config.disable_custom_all_reduce)):
+            logger.warning("enable_multi_stream with custom_all_reduce is not supported yet. "
+                           "Set disable_custom_all_reduce=true.")
+            parallel_config.disable_custom_all_reduce = True
 
     def get_hf_config_sliding_window(
             self) -> Union[Optional[int], list[Optional[int]]]:
@@ -2508,6 +2517,14 @@ class MultiModalConfig:
         return self.limit_per_prompt.get(modality, 1)
 
     # TODO: Add configs to init vision tower or not.
+
+@dataclass
+class MultiStreamConfig:
+    """Controls the behavior of multi-stream models."""
+    min_total_tokens_to_split: int = 256
+    min_prefill_tokens_to_split: int = 64
+    imbalance_ratio: float = 0.1
+    num_micro_batches: int = 2
 
 
 @dataclass
