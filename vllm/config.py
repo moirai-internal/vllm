@@ -2140,7 +2140,8 @@ class SpeculativeConfig:
                 )
 
                 # Automatically detect the method
-                if "eagle-" in self.draft_model_config.model.lower():
+                if (self.draft_model_config.hf_config.model_type == 'eagle'
+                        or "eagle-" in self.draft_model_config.model.lower()):
                     self.method = "eagle"
                 elif self.draft_model_config.hf_config.model_type == "medusa":
                     self.method = "medusa"
@@ -2152,9 +2153,15 @@ class SpeculativeConfig:
 
                 # Replace hf_config for EAGLE draft_model
                 if self.method == "eagle":
-                    if self.enable_chunked_prefill:
+                    if (self.enable_chunked_prefill
+                            and self.target_model_config.enforce_eager
+                            and not self.disable_mqa_scorer):
+                        # TODO: add support for mqa scorer
                         raise ValueError(
-                            "Chunked prefill and EAGLE are not compatible.")
+                            "EAGLE + chunked prefill only supports batch " \
+                            "expansion scorer atm. if cuda graph is used, " \
+                            "batch expansion scorer is the current fallback."
+                        )
 
                     from vllm.transformers_utils.configs.eagle import (
                         EAGLEConfig)
