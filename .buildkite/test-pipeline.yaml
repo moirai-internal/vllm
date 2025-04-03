@@ -93,6 +93,7 @@ steps:
 
 - label: Core Test # 10min
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   fast_check: true
   source_file_dependencies:
   - vllm/core
@@ -105,6 +106,7 @@ steps:
   working_dir: "/vllm-workspace/tests"
   fast_check: true
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - vllm/
   - tests/entrypoints/llm
@@ -174,6 +176,7 @@ steps:
 
 - label: Regression Test # 5min
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - vllm/
   - tests/test_regression
@@ -184,6 +187,7 @@ steps:
 
 - label: Engine Test # 10min
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - vllm/
   - tests/engine
@@ -246,6 +250,7 @@ steps:
 
 - label: Prefix Caching Test # 9min
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - vllm/
   - tests/prefix_caching
@@ -264,6 +269,7 @@ steps:
 
 - label: LogitsProcessor Test # 5min
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - vllm/model_executor/layers
   - vllm/model_executor/guided_decoding
@@ -285,6 +291,7 @@ steps:
 
 - label: LoRA Test %N # 15min each
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - vllm/lora
   - tests/lora
@@ -311,6 +318,7 @@ steps:
 
 - label: Kernels Test %N # 1h each
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - csrc/
   - vllm/attention
@@ -321,7 +329,8 @@ steps:
 
 - label: Tensorizer Test # 11min
   mirror_hardwares: [amd]
-  soft_fail: true
+  amd_gpu_type: "mi300"
+  #soft_fail: true
   source_file_dependencies:
   - vllm/model_executor/model_loader
   - tests/tensorizer_loader
@@ -333,6 +342,7 @@ steps:
 - label: Benchmarks # 9min
   working_dir: "/vllm-workspace/.buildkite"
   mirror_hardwares: [amd]
+  amd_gpu_type: "mi300"
   source_file_dependencies:
   - benchmarks/
   commands:
