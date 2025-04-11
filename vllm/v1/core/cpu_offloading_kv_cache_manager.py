@@ -61,7 +61,8 @@ class CpuOffloadingKVCacheManager(KVCacheManager):
 
         block_hashes = self.req_to_block_hashes[request.request_id]
         if not block_hashes:
-            block_hashes = hash_request_tokens(self.block_size, request)
+            block_hashes = hash_request_tokens(self.caching_hash_fn,
+                                               self.block_size, request)
             self.req_to_block_hashes[request.request_id] = block_hashes
 
         self.prefix_cache_stats.requests += 1
