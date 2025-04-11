@@ -66,30 +66,39 @@ class CpuOffloadingKVCacheManager(KVCacheManager):
             self.req_to_block_hashes[request.request_id] = block_hashes
 
         self.prefix_cache_stats.requests += 1
-        if request.sampling_params.prompt_logprobs is None:
-            # Check for cache hits
-            computed_blocks = []
-            computed_cpu_blocks = []
-            for block_hash in block_hashes:
-                # NOTE: Order matters here, since a block might reside both in gpu
-                # and cpu cache, we check cpu cache only if gpu cache is a miss.
-                if cached_block := self.block_pool.get_cached_block(block_hash):
-                    computed_blocks.append(cached_block)
-                elif cached_cpu_block := self.block_pool.get_cached_cpu_block(block_hash):
-                    computed_cpu_blocks.append(cached_cpu_block)
-                else:
-                    break
-            self.prefix_cache_stats.queries += len(block_hashes)
-            self.prefix_cache_stats.hits += len(computed_blocks)
-            self.cpu_prefix_cache_stats.queries += (len(block_hashes) - len(computed_blocks))
-            self.cpu_prefix_cache_stats.hits += len(computed_cpu_blocks)
-
-            num_computed_tokens = (len(computed_blocks) +
-                                   len(computed_cpu_blocks)) * self.block_size
-            return computed_blocks, computed_cpu_blocks, num_computed_tokens
-        else:
+        if request.sampling_params.prompt_logprobs is not None:
             # Skip cache hits for prompt logprobs
             return [], [], 0
+
+        if len(block_hashes) * self.block_size == request.num_tokens:
+            last_block_hash = block_hashes.pop()
+        else:
+            last_block_hash = None
+
+        # Check for cache hits
+        computed_blocks = []
+        computed_cpu_blocks = []
+        for block_hash in block_hashes:
+            # NOTE: Order matters here, since a block might reside both in gpu
+            # and cpu cache, we check cpu cache only if gpu cache is a miss.
+            if cached_block := self.block_pool.get_cached_block(block_hash):
+                computed_blocks.append(cached_block)
+            elif cached_cpu_block := self.block_pool.get_cached_cpu_block(block_hash):
+                computed_cpu_blocks.append(cached_cpu_block)
+            else:
+                break
+
+        if last_block_hash is not None:
+            block_hashes.append(last_block_hash)
+
+        self.prefix_cache_stats.queries += len(block_hashes)
+        self.prefix_cache_stats.hits += len(computed_blocks)
+        self.cpu_prefix_cache_stats.queries += (len(block_hashes) - len(computed_blocks))
+        self.cpu_prefix_cache_stats.hits += len(computed_cpu_blocks)
+
+        num_computed_tokens = (len(computed_blocks) +
+                               len(computed_cpu_blocks)) * self.block_size
+        return computed_blocks, computed_cpu_blocks, num_computed_tokens
 
     def allocate_slots(
         self,
