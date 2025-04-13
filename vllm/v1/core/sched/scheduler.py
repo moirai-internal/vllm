@@ -44,6 +44,7 @@ class Scheduler(SchedulerInterface):
         mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
         include_finished_set: bool = False,
         log_stats: bool = False,
+        newline_token_id_set: set[int] = set(),
     ) -> None:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
@@ -51,6 +52,7 @@ class Scheduler(SchedulerInterface):
         self.kv_cache_config = kv_cache_config
         self.log_stats = log_stats
         self.structured_output_manager = structured_output_manager
+        self.newline_token_id_set = newline_token_id_set
 
         # include_finished_set controls whether a separate set of finished
         # request ids should be included in the EngineCoreOutputs returned
@@ -478,6 +480,8 @@ class Scheduler(SchedulerInterface):
             req_data.new_token_ids = new_token_ids
             req_data.new_block_ids = new_block_ids
             req_data.num_computed_tokens = num_computed_tokens
+            req_data.num_dropped_tokens = request.num_dropped_tokens
+            req_data.should_compress = request.should_compress
         else:
             req_data = CachedRequestData.from_request(request,
                                                       resumed_from_preemption,
@@ -573,6 +577,7 @@ class Scheduler(SchedulerInterface):
         spec_token_ids = model_runner_output.spec_token_ids
         logprobs = model_runner_output.logprobs
         prompt_logprobs_dict = model_runner_output.prompt_logprobs_dict
+        num_dropped_tokens_list = model_runner_output.num_dropped_tokens_list
         num_scheduled_tokens = scheduler_output.num_scheduled_tokens
 
         new_running: list[Request] = []
@@ -592,6 +597,7 @@ class Scheduler(SchedulerInterface):
 
             req_index = model_runner_output.req_id_to_index[req_id]
             generated_token_ids = sampled_token_ids[req_index]
+            request.num_dropped_tokens += num_dropped_tokens_list[req_index]
 
             scheduled_spec_token_ids = (
                 scheduler_output.scheduled_spec_decode_tokens.get(req_id))
@@ -629,6 +635,7 @@ class Scheduler(SchedulerInterface):
                 request.spec_token_ids = spec_token_ids[req_index]
 
             stopped = False
+            should_compress = False
             new_logprobs = None
             new_token_ids = generated_token_ids
 
@@ -637,6 +644,8 @@ class Scheduler(SchedulerInterface):
             # to return empty token ids for the request.
             for num_new, output_token_id in enumerate(new_token_ids, 1):
                 request.append_output_token_ids(output_token_id)
+                if output_token_id in self.newline_token_id_set:
+                    should_compress = True
 
                 # Check for stop and update request state.
                 # This must be called before we make the EngineCoreOutput.
@@ -645,6 +654,7 @@ class Scheduler(SchedulerInterface):
                     self._free_request(request)
                     del new_token_ids[num_new:]  # Trim new tokens if needed.
                     break
+            request.should_compress = should_compress
 
             # Extract sample logprobs if needed.
             if request.sampling_params.logprobs is not None and logprobs:

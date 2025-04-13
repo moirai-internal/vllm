@@ -60,6 +60,8 @@ class CachedRequestData:
     new_token_ids: list[int]
     new_block_ids: list[int]
     num_computed_tokens: int
+    num_dropped_tokens: int
+    should_compress: bool
 
     @classmethod
     def from_request(
@@ -75,6 +77,8 @@ class CachedRequestData:
             new_token_ids=new_token_ids,
             new_block_ids=new_block_ids,
             num_computed_tokens=request.num_computed_tokens,
+            num_dropped_tokens=request.num_dropped_tokens,
+            should_compress=request.should_compress,
         )
 
 

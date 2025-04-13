@@ -56,6 +56,7 @@ class EngineCoreClient(ABC):
         vllm_config: VllmConfig,
         executor_class: type[Executor],
         log_stats: bool,
+        newline_token_id_set: set[int] = set(),
     ) -> "EngineCoreClient":
 
         # TODO: support this for debugging purposes.
@@ -73,7 +74,7 @@ class EngineCoreClient(ABC):
         if multiprocess_mode and not asyncio_mode:
             return SyncMPClient(vllm_config, executor_class, log_stats)
 
-        return InprocClient(vllm_config, executor_class, log_stats)
+        return InprocClient(vllm_config, executor_class, log_stats, newline_token_id_set)
 
     @abstractmethod
     def shutdown(self):

@@ -85,6 +85,9 @@ class FlashAttentionMetadata:
     seq_lens: torch.Tensor
     block_table: torch.Tensor
     slot_mapping: torch.Tensor
+    num_reqs: int
+    should_compress_list: tuple[bool, ...]
+    num_dropped_tokens_list: list[int]
 
     # For cascade attention.
     use_cascade: bool
@@ -284,7 +287,7 @@ class FlashAttentionMetadataBuilder:
         return False
 
     def build(self, num_reqs: int, num_actual_tokens: int, max_query_len: int,
-              common_prefix_len: int):
+              common_prefix_len: int, should_compress_list: tuple[bool, ...]):
         max_seq_len = self.runner.seq_lens_np[:num_reqs].max()
         query_start_loc_cpu = self.runner.query_start_loc_cpu[:num_reqs + 1]
         query_start_loc = query_start_loc_cpu.to(self.runner.device,
@@ -335,6 +338,8 @@ class FlashAttentionMetadataBuilder:
             prefix_kv_lens = None
             suffix_kv_lens = None
 
+        num_dropped_tokens_list = [0] * num_reqs
+
         attn_metadata = FlashAttentionMetadata(
             num_actual_tokens=num_actual_tokens,
             max_query_len=max_query_len,
@@ -349,6 +354,9 @@ class FlashAttentionMetadataBuilder:
             prefix_kv_lens=prefix_kv_lens,
             suffix_kv_lens=suffix_kv_lens,
             local_attn_metadata=local_attn_metadata,
+            num_reqs=num_reqs,
+            should_compress_list=should_compress_list,
+            num_dropped_tokens_list=num_dropped_tokens_list,
         )
         return attn_metadata
 
@@ -520,6 +528,14 @@ class FlashAttentionImpl(AttentionImpl):
                 k_descale=layer._k_scale.expand(descale_shape),
                 v_descale=layer._v_scale.expand(descale_shape),
             )
+            for i in range(attn_metadata.num_reqs):
+                if not attn_metadata.should_compress_list[i]:
+                    continue
+                # TODO: compress kv cache and persist to GPU
+                num_dropped_tokens_i = i  # TODO: update value
+                if num_dropped_tokens_i != attn_metadata.num_dropped_tokens_list[i]:
+                    assert attn_metadata.num_dropped_tokens_list[i] == 0
+                    attn_metadata.num_dropped_tokens_list[i] = num_dropped_tokens_i
             return output
 
         assert not use_local_attn, (

@@ -34,6 +34,7 @@ logger = init_logger(__name__)
 _G = TypeVar("_G", bound=BaseTokenizerGroup, default=BaseTokenizerGroup)
 _R = TypeVar("_R", default=Any)
 
+NEWLINE_TOKENS: list[str] = ["\n", ".\n", ")\n", "\n\n", ".\n\n", ")\n\n"]
 
 class LLMEngine:
     """Legacy LLMEngine for backwards compatibility."""
@@ -86,6 +87,8 @@ class LLMEngine:
         self.output_processor = OutputProcessor(self.tokenizer,
                                                 log_stats=False)
 
+        newline_token_id_set = {self.tokenizer.encode(token)[-1] for token in NEWLINE_TOKENS}
+
         # EngineCore (gets EngineCoreRequests and gives EngineCoreOutputs)
         self.engine_core = EngineCoreClient.make_client(
             multiprocess_mode=multiprocess_mode,
@@ -93,6 +96,7 @@ class LLMEngine:
             vllm_config=vllm_config,
             executor_class=executor_class,
             log_stats=False,  # FIXME: implement
+            newline_token_id_set=newline_token_id_set,
         )
 
         if not multiprocess_mode:
@@ -117,7 +121,7 @@ class LLMEngine:
                    log_stats=(not disable_log_stats),
                    usage_context=usage_context,
                    stat_loggers=stat_loggers,
-                   multiprocess_mode=envs.VLLM_ENABLE_V1_MULTIPROCESSING)
+                   multiprocess_mode=False)  # TODO: updating constant somehow doesn't work
 
     @classmethod
     def from_engine_args(
