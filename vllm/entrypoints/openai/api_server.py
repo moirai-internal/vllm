@@ -831,8 +831,19 @@ def build_app(args: Namespace) -> FastAPI:
         allow_headers=args.allowed_headers,
     )
 
+    def _handle_pydantic_validation_error(exc: RequestValidationError):
+        """Temp util function to handle pydantic validation errors."""
+        errors = exc.errors()
+        filtered_errors = []
+        for error in errors:
+            if "msg" in error:
+                filtered_errors.append(error["msg"])
+
+        return filtered_errors or exc
+
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_, exc):
+        exc = _handle_pydantic_validation_error(exc)
         err = ErrorResponse(message=str(exc),
                             type="BadRequestError",
                             code=HTTPStatus.BAD_REQUEST)
