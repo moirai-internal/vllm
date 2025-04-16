@@ -55,6 +55,7 @@ class EngineCore:
         vllm_config: VllmConfig,
         executor_class: type[Executor],
         log_stats: bool,
+        newline_token_id_set: set[int] = set(),
     ):
         assert vllm_config.model_config.runner_type != "pooling"
 
@@ -103,6 +104,7 @@ class EngineCore:
             include_finished_set=vllm_config.parallel_config.data_parallel_size
             > 1,
             log_stats=self.log_stats,
+            newline_token_id_set=newline_token_id_set,
         )
 
         # Setup MM Input Mapper.

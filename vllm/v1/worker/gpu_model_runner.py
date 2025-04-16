@@ -256,6 +256,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                                          device="cpu",
                                          pin_memory=self.pin_memory)
         self.positions_np = self.positions_cpu.numpy()
+        self.compressed_positions_cpu = torch.zeros(self.max_num_tokens,
+                                         dtype=torch.int64,
+                                         device="cpu",
+                                         pin_memory=self.pin_memory)
+        self.compressed_positions_np = self.compressed_positions_cpu.numpy()
         self.slot_mapping_cpu = torch.zeros(self.max_num_tokens,
                                             dtype=torch.int32,
                                             device="cpu",
@@ -417,6 +422,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # Update the persistent batch.
             self.input_batch.num_computed_tokens_cpu[req_index] = (
                 num_computed_tokens)
+            self.input_batch.num_dropped_tokens_list_cpu[req_index] = (
+                req_data.num_dropped_tokens)
+            self.input_batch.should_compress_list[req_index] = \
+                req_data.should_compress
             self.input_batch.block_table.append_row(req_data.new_block_ids,
                                                     req_index)
             # Add new_token_ids to token_ids_cpu.
@@ -511,6 +520,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         np.add(self.input_batch.num_computed_tokens_cpu[req_indices],
                arange,
                out=positions_np)
+        compressed_positions_np = self.compressed_positions_np[:total_num_scheduled_tokens]
+        num_kv_cache_tokens = self.input_batch.num_computed_tokens_cpu - \
+            self.input_batch.num_dropped_tokens_list_cpu
+        np.add(num_kv_cache_tokens[req_indices],
+               arange,
+               out=compressed_positions_np)
 
         # Calculate M-RoPE positions.
         # Only relevant for models using M-RoPE (e.g, Qwen2-VL)
@@ -539,13 +554,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # NOTE(woosuk): We can't simply use `token_indices // block_size` here
         # because M (max_model_len) is not necessarily divisible by block_size.
         block_table_indices = (req_indices * self.max_num_blocks_per_req +
-                               positions_np // self.block_size)
+                               compressed_positions_np // self.block_size)
         # NOTE(woosuk): We use torch.index_select instead of np.take here
         # because torch.index_select is much faster than np.take for large
         # tensors.
         block_table_cpu = self.input_batch.block_table.get_cpu_tensor()
         block_numbers = block_table_cpu.flatten()[block_table_indices].numpy()
-        block_offsets = positions_np % self.block_size
+        block_offsets = compressed_positions_np % self.block_size
         np.add(block_numbers * self.block_size,
                block_offsets,
                out=self.slot_mapping_np[:total_num_scheduled_tokens])
@@ -580,11 +595,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 scheduler_output.num_common_prefix_blocks,
             )
 
+        should_compress_list = tuple(self.input_batch.should_compress_list)
         attn_metadata = self.attn_metadata_builder.build(
             num_reqs=num_reqs,
             num_actual_tokens=total_num_scheduled_tokens,
             max_query_len=max_num_scheduled_tokens,
             common_prefix_len=common_prefix_len,
+            should_compress_list=should_compress_list,
         )
 
         use_spec_decode = len(
@@ -1240,6 +1257,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             spec_token_ids=spec_token_ids,
             logprobs=logprobs_lists,
             prompt_logprobs_dict=prompt_logprobs_dict,
+            num_dropped_tokens_list=attn_metadata.num_dropped_tokens_list,
         )
 
     def generate_draft_token_ids(
