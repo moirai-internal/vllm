@@ -140,6 +140,7 @@ class EngineArgs:
     kv_cache_dtype: str = 'auto'
     seed: Optional[int] = None
     max_model_len: Optional[int] = None
+    max_output_len: Optional[int] = None
     # Note: Specifying a custom executor backend by passing a class
     # is intended for expert use only. The API may change without
     # notice.
@@ -478,6 +479,13 @@ class EngineArgs:
                             'Examples:\n'
                             '- 1k → 1000\n'
                             '- 1K → 1024\n')
+        parser.add_argument('--max-output-len',
+                            type=int,
+                            default=EngineArgs.max_output_len,
+                            help='Maximum number of tokens that can be '
+                            'requested in a single request. '
+                            'If set, this will override any larger max_tokens '
+                            'value in the request.')
         parser.add_argument(
             '--guided-decoding-backend',
             type=str,
@@ -1078,6 +1086,7 @@ class EngineArgs:
             hf_overrides=self.hf_overrides,
             tokenizer_revision=self.tokenizer_revision,
             max_model_len=self.max_model_len,
+            max_output_len=self.max_output_len,
             quantization=self.quantization,
             enforce_eager=self.enforce_eager,
             max_seq_len_to_capture=self.max_seq_len_to_capture,
