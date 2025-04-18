@@ -327,35 +327,6 @@ class MLACommonMetadata(Generic[D]):
     decode: Optional[D] = None
     prefill: Optional[MLACommonPrefillMetadata] = None
 
-        @dataclass
-        class ChunkedContextMetadata:
-            # New for MLA (compared to FlashAttention)
-            # For handling chunked prefill
-            cu_seq_lens: torch.Tensor
-            starts: torch.Tensor
-            seq_tot: list[int]
-            max_seq_lens: list[int]
-            workspace: torch.Tensor
-
-        # Input positions for rotrary embeddings since for MLA the rotary
-        # position embeddings are applied inside the attention backend
-        input_positions: torch.Tensor
-        block_table: torch.Tensor
-        query_start_loc: torch.Tensor
-        max_query_len: int
-        chunked_context: Optional[ChunkedContextMetadata] = None
-
-    @dataclass
-    class DecodeMetadata:
-        # Input positions for rotrary embeddings since for MLA the rotary
-        # position embeddings are applied inside the attention backend
-        input_positions: torch.Tensor
-        block_table: torch.Tensor
-        seq_lens: torch.Tensor
-
-    decode: Optional[DecodeMetadata] = None
-    prefill: Optional[PrefillMetadata] = None
-
     def __post_init__(self):
         supported_head_sizes = MLACommonBackend.get_supported_head_sizes()
         if self.head_dim is not None and self.head_dim \
@@ -373,6 +344,7 @@ class MLACommonMetadataBuilder(Generic[M]):
     NOTE: Please read the comment at the top of the file before trying to
     understand this class
     """
+    decode_threshold: int = 1
 
     def __init__(self,
                  runner: "GPUModelRunner",
@@ -433,11 +405,10 @@ class MLACommonMetadataBuilder(Generic[M]):
 
         for i, req_id in enumerate(input_batch.req_ids):
             num_tokens = scheduler_output.num_scheduled_tokens[req_id]
-            # for now treat 1 scheduled token as "decode" even if its not,
-            # we should update this to something like < 8 in the future but
-            # currently the TritonMLA._forward_decode only supports
-            # num_tokens = 1
-            if num_tokens == 1:
+            # for now treat <= decode_threshold scheduled token as "decode" and
+            # use the less compute efficient but more memory efficient
+            # _forward_decode for these requests
+            if num_tokens <= self.decode_threshold:
                 decodes.append(i)
                 num_decode_tokens += num_tokens
             else:
@@ -478,12 +449,16 @@ class MLACommonMetadataBuilder(Generic[M]):
 
         return modified_batch
 
-    def _build_decode(self, input_positions: torch.Tensor,
-                      block_table: torch.Tensor, seq_lens: torch.Tensor):
+    def _build_decode(self, seq_lens_cpu: torch.Tensor,
+                      seq_lens_device: torch.Tensor,
+                      query_start_loc_cpu: torch.Tensor,
+                      query_start_loc_device: torch.Tensor,
+                      input_positions: torch.Tensor,
+                      block_table: torch.Tensor):
         return MLACommonDecodeMetadata(
             input_positions=input_positions,
             block_table=block_table,
-            seq_lens=seq_lens,
+            seq_lens=seq_lens_device,
         )
 
     def build(self, num_reqs: int, num_actual_tokens: int, max_query_len: int,
@@ -496,8 +471,8 @@ class MLACommonMetadataBuilder(Generic[M]):
         device = self.runner.device
         block_table = (
             self.runner.input_batch.block_table.get_device_tensor()[:num_reqs])
-        query_start_loc = self.runner.query_start_loc_cpu[:num_reqs + 1].to(
-            device, non_blocking=True)
+        query_start_loc_cpu = self.runner.query_start_loc_cpu[:num_reqs + 1]
+        query_start_loc = query_start_loc_cpu.to(device, non_blocking=True)
         slot_mapping = self.runner.slot_mapping_cpu[:num_actual_tokens].to(
             device, non_blocking=True).long()
         input_positions = self.runner.positions_cpu[:num_actual_tokens].to(
@@ -587,9 +562,13 @@ class MLACommonMetadataBuilder(Generic[M]):
         decode_metadata = None
         if self._num_decodes > 0:
             decode_metadata = self._build_decode(
+                query_start_loc_device=query_start_loc[:self._num_decodes + 1],
+                query_start_loc_cpu=query_start_loc_cpu[:self._num_decodes +
+                                                        1],
+                seq_lens_device=seq_lens[:self._num_decodes],
+                seq_lens_cpu=seq_lens_cpu[:self._num_decodes],
                 input_positions=input_positions[:self._num_decode_tokens],
                 block_table=block_table[:self._num_decodes, ...],
-                seq_lens=seq_lens[:self._num_decodes],
             )
 
         return self.metadata_cls(
@@ -665,7 +644,6 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
         self.o_proj = o_proj
         self.vllm_flash_attn_version = get_flash_attn_version()
 
-        self.triton_fa_func = triton_attention
         # Handle the differences between the flash_attn_varlen from flash_attn
         # and the one from vllm_flash_attn. The former is used on RoCM and the
         # latter has an additional parameter to control FA2 vs FA3
