@@ -25,6 +25,11 @@ except Exception:
 
 logger = init_logger(__name__)
 
+if current_platform.is_cuda():
+    CUSTOM_ALL_REDUCE_DEFAULT_MAX_SIZE = 8192 * 1024  # 8 MB
+else:
+    CUSTOM_ALL_REDUCE_DEFAULT_MAX_SIZE = 2 * 8192 * 1024  # 16 MB
+
 
 def _can_p2p(rank: int, world_size: int) -> bool:
     for i in range(world_size):
@@ -46,14 +51,13 @@ def is_weak_contiguous(inp: torch.Tensor):
 
 
 class CustomAllreduce:
-
     _SUPPORTED_WORLD_SIZES = [2, 4, 6, 8]
 
     # max_size: max supported allreduce size
     def __init__(self,
                  group: ProcessGroup,
                  device: Union[int, str, torch.device],
-                 max_size=8192 * 1024) -> None:
+                 max_size: Optional[int] = None) -> None:
         """
         Args:
             group: the process group to work on. If None, it will use the
@@ -100,6 +104,10 @@ class CustomAllreduce:
                 "warning, specify disable_custom_all_reduce=True explicitly.",
                 world_size, str(CustomAllreduce._SUPPORTED_WORLD_SIZES))
             return
+
+        if max_size is None:
+            max_size = CUSTOM_ALL_REDUCE_DEFAULT_MAX_SIZE
+        logger.debug("Custom allreduce max input size is set to %d", max_size)
 
         if isinstance(device, int):
             device = torch.device(f"cuda:{device}")

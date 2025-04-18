@@ -183,6 +183,8 @@ class EngineArgs:
     enforce_eager: Optional[bool] = None
     max_seq_len_to_capture: int = 8192
     disable_custom_all_reduce: bool = ParallelConfig.disable_custom_all_reduce
+    custom_all_reduce_max_size: Optional[
+        int] = ParallelConfig.custom_all_reduce_max_size
     tokenizer_pool_size: int = TokenizerPoolConfig.pool_size
     # Note: Specifying a tokenizer pool by passing a class
     # is intended for expert use only. The API may change without
@@ -544,6 +546,10 @@ class EngineArgs:
         parallel_group.add_argument(
             '--disable-custom-all-reduce',
             **parallel_kwargs["disable_custom_all_reduce"])
+        parallel_group.add_argument(
+            '--custom-all-reduce-max-size',
+            **parallel_kwargs["custom_all_reduce_max_size"])
+
         # KV cache arguments
         parser.add_argument('--block-size',
                             type=int,
@@ -1223,6 +1229,7 @@ class EngineArgs:
             enable_expert_parallel=self.enable_expert_parallel,
             max_parallel_loading_workers=self.max_parallel_loading_workers,
             disable_custom_all_reduce=self.disable_custom_all_reduce,
+            custom_all_reduce_max_size=self.custom_all_reduce_max_size,
             tokenizer_pool_config=TokenizerPoolConfig.create_config(
                 self.tokenizer_pool_size,
                 self.tokenizer_pool_type,
