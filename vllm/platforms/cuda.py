@@ -176,7 +176,7 @@ class CudaPlatformBase(Platform):
                              kv_cache_dtype, block_size, use_v1,
                              use_mla) -> str:
         if use_mla:
-            from vllm.attention.backends.flashmla import is_flashmla_supported
+            from vllm.attention.ops.flashmla import is_flashmla_supported
             from vllm.vllm_flash_attn.fa_utils import flash_attn_supports_mla
 
             # currently FlashAttn MLA is only supported on V1
