@@ -58,12 +58,15 @@ class FlashMLAMetadataBuilder(MLACommonMetadataBuilder[FlashMLAMetadata]):
         self.num_q_heads = self.runner.model_config.get_num_attention_heads(
             self.runner.parallel_config)
 
-    def _build_decode(self, input_positions: torch.Tensor,
-                      block_table: torch.Tensor,
-                      seq_lens: torch.Tensor) -> FlashMLADecodeMetadata:
+    def _build_decode(self, seq_lens_cpu: torch.Tensor,
+                      seq_lens_device: torch.Tensor,
+                      query_start_loc_cpu: torch.Tensor,
+                      query_start_loc_device: torch.Tensor,
+                      input_positions: torch.Tensor,
+                      block_table: torch.Tensor) -> FlashMLADecodeMetadata:
         tile_scheduler_metadata, num_splits = \
             get_mla_metadata(
-            seq_lens,
+            seq_lens_device,
             self.num_q_heads,
             1, # MQA for the decode path
         )
@@ -71,7 +74,7 @@ class FlashMLAMetadataBuilder(MLACommonMetadataBuilder[FlashMLAMetadata]):
         return FlashMLADecodeMetadata(
             input_positions=input_positions,
             block_table=block_table,
-            seq_lens=seq_lens,
+            seq_lens=seq_lens_device,
             tile_scheduler_metadata=tile_scheduler_metadata,
             num_splits=num_splits,
         )

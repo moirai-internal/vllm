@@ -207,7 +207,8 @@ from vllm.utils import cdiv, round_down
 from vllm.vllm_flash_attn.fa_utils import get_flash_attn_version
 
 try:
-    from vllm.vllm_flash_attn import flash_attn_varlen_func
+    from vllm.vllm_flash_attn import (flash_attn_varlen_func,
+                                      get_scheduler_metadata)
     is_vllm_fa = True
 except ImportError:
     # For rocm use upstream flash attention
@@ -218,6 +219,8 @@ if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
     from vllm.v1.worker.gpu_input_batch import InputBatch
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
+is_hip = current_platform.is_rocm()
 
 logger = init_logger(__name__)
 
@@ -265,6 +268,7 @@ class MLACommonPrefillMetadata:
         seq_tot: list[int]
         max_seq_lens: list[int]
         workspace: torch.Tensor
+        scheduler_metatadata: list[Optional[torch.Tensor]]
 
     # Input positions for rotrary embeddings since for MLA the rotary
     # position embeddings are applied inside the attention backend
@@ -272,6 +276,7 @@ class MLACommonPrefillMetadata:
     block_table: torch.Tensor
     query_start_loc: torch.Tensor
     max_query_len: int
+    scheduler_metadata: Optional[torch.Tensor] = None
     chunked_context: Optional[ChunkedContextMetadata] = None
 
 
@@ -338,6 +343,7 @@ class MLACommonMetadataBuilder(Generic[M]):
     NOTE: Please read the comment at the top of the file before trying to
     understand this class
     """
+    decode_threshold: int = 1
 
     def __init__(self,
                  runner: "GPUModelRunner",
@@ -352,10 +358,10 @@ class MLACommonMetadataBuilder(Generic[M]):
         self.num_heads = model_config.get_num_attention_heads(
             runner.parallel_config)
         self.mla_dims = get_mla_dims(model_config)
-        self.aot_schedule = is_vllm_fa and (get_flash_attn_version() == 3)
+        self.fa_aot_schedule = is_vllm_fa and (get_flash_attn_version() == 3)
 
         # Dont try to access the runner on AMD
-        if self.aot_schedule:
+        if self.fa_aot_schedule:
             self.page_size = self.runner.block_size
 
         if self.chunked_prefill_enabled:
@@ -398,11 +404,10 @@ class MLACommonMetadataBuilder(Generic[M]):
 
         for i, req_id in enumerate(input_batch.req_ids):
             num_tokens = scheduler_output.num_scheduled_tokens[req_id]
-            # for now treat 1 scheduled token as "decode" even if its not,
-            # we should update this to something like < 8 in the future but
-            # currently the TritonMLA._forward_decode only supports
-            # num_tokens = 1
-            if num_tokens == 1:
+            # for now treat <= decode_threshold scheduled token as "decode" and
+            # use the less compute efficient but more memory efficient
+            # _forward_decode for these requests
+            if num_tokens <= self.decode_threshold:
                 decodes.append(i)
                 num_decode_tokens += num_tokens
             else:
@@ -443,13 +448,36 @@ class MLACommonMetadataBuilder(Generic[M]):
 
         return modified_batch
 
-    def _build_decode(self, input_positions: torch.Tensor,
-                      block_table: torch.Tensor, seq_lens: torch.Tensor):
+    def _build_decode(self, seq_lens_cpu: torch.Tensor,
+                      seq_lens_device: torch.Tensor,
+                      query_start_loc_cpu: torch.Tensor,
+                      query_start_loc_device: torch.Tensor,
+                      input_positions: torch.Tensor,
+                      block_table: torch.Tensor):
         return MLACommonDecodeMetadata(
             input_positions=input_positions,
             block_table=block_table,
-            seq_lens=seq_lens,
+            seq_lens=seq_lens_device,
         )
+
+    def _schedule_prefill(self, num_reqs, cu_query_lens, max_query_len,
+                          seqlens, max_seq_len, causal):
+        if self.fa_aot_schedule:
+            return get_scheduler_metadata(
+                batch_size=num_reqs,
+                max_seqlen_q=max_query_len,
+                max_seqlen_k=max_seq_len,
+                cache_seqlens=seqlens,
+                num_heads_q=self.num_heads,
+                num_heads_kv=self.num_heads,
+                headdim=self.mla_dims.qk_nope_head_dim +
+                self.mla_dims.qk_rope_head_dim,
+                headdim_v=self.mla_dims.v_head_dim,
+                page_size=self.page_size,
+                cu_seqlens_q=cu_query_lens,
+                causal=causal,
+            )
+        return None
 
     def build(self, num_reqs: int, num_actual_tokens: int, max_query_len: int,
               common_prefix_len: int) -> M:
@@ -461,8 +489,8 @@ class MLACommonMetadataBuilder(Generic[M]):
         device = self.runner.device
         block_table = (
             self.runner.input_batch.block_table.get_device_tensor()[:num_reqs])
-        query_start_loc = self.runner.query_start_loc_cpu[:num_reqs + 1].to(
-            device, non_blocking=True)
+        query_start_loc_cpu = self.runner.query_start_loc_cpu[:num_reqs + 1]
+        query_start_loc = query_start_loc_cpu.to(device, non_blocking=True)
         slot_mapping = self.runner.slot_mapping_cpu[:num_actual_tokens].to(
             device, non_blocking=True).long()
         input_positions = self.runner.positions_cpu[:num_actual_tokens].to(
@@ -529,17 +557,41 @@ class MLACommonMetadataBuilder(Generic[M]):
                              out=cu_seq_lens_cpu[:, 1:],
                              dtype=torch.int32)
 
+                chunks_max_seq_lens = chunk_seq_lens.max(dim=1).values
+
+                chunks_scheduler_metadata = []
+                for i in range(num_chunks):
+                    chunks_scheduler_metadata.append(
+                        self._schedule_prefill(
+                            self._num_prefills,
+                            cu_seq_lens_cpu[i],
+                            max_query_len,
+                            chunk_seq_lens[i],
+                            chunks_max_seq_lens[i],
+                            causal=False,
+                        ))
+
                 chunked_context_metadata = \
                     MLACommonPrefillMetadata.ChunkedContextMetadata(
                     cu_seq_lens=cu_seq_lens_cpu.to(device, non_blocking=True),
                     starts=chunk_starts.to(device, non_blocking=True),
                     seq_tot=chunk_seq_lens.sum(dim=1).tolist(),
-                    max_seq_lens=chunk_seq_lens.max(dim=1).values.tolist(),
+                    max_seq_lens=chunks_max_seq_lens,
                     workspace=self.chunked_prefill_workspace,
+                    scheduler_metatadata=chunks_scheduler_metadata,
                 )
 
                 assert max(chunked_context_metadata.max_seq_lens) <= \
                     self.chunked_prefill_workspace_size
+
+            scheduler_metadata = self._schedule_prefill(
+                self._num_prefills,
+                prefill_query_start_loc,
+                max_query_len,
+                prefill_query_start_loc,
+                max_query_len,
+                causal=True,
+            )
 
             prefill_metadata = MLACommonPrefillMetadata(
                 input_positions=input_positions[tokens_start:],
@@ -547,14 +599,19 @@ class MLACommonMetadataBuilder(Generic[M]):
                 query_start_loc=prefill_query_start_loc,
                 max_query_len=max_query_len,
                 chunked_context=chunked_context_metadata,
+                scheduler_metadata=scheduler_metadata,
             )
 
         decode_metadata = None
         if self._num_decodes > 0:
             decode_metadata = self._build_decode(
+                query_start_loc_device=query_start_loc[:self._num_decodes + 1],
+                query_start_loc_cpu=query_start_loc_cpu[:self._num_decodes +
+                                                        1],
+                seq_lens_device=seq_lens[:self._num_decodes],
+                seq_lens_cpu=seq_lens_cpu[:self._num_decodes],
                 input_positions=input_positions[:self._num_decode_tokens],
                 block_table=block_table[:self._num_decodes, ...],
-                seq_lens=seq_lens[:self._num_decodes],
             )
 
         return self.metadata_cls(
@@ -657,20 +714,34 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
                                          v,
                                          return_softmax_lse=False,
                                          softmax_scale=None,
+                                         scheduler_metadata=None,
                                          **kwargs):
         maybe_padded_v = v
         if self._pad_v:
             maybe_padded_v = torch.nn.functional.pad(
                 v, [0, q.shape[-1] - v.shape[-1]], value=0)
 
-        attn_out = self.flash_attn_varlen_func(
-            q=q,
-            k=k,
-            v=maybe_padded_v,
-            return_softmax_lse=return_softmax_lse,
-            softmax_scale=softmax_scale,
-            **kwargs,
-        )
+        # scheduler metadata only supported if we are using the vllm version of
+        # flash attention
+        if is_vllm_fa:
+            attn_out = self.flash_attn_varlen_func(
+                q=q,
+                k=k,
+                v=maybe_padded_v,
+                return_softmax_lse=return_softmax_lse,
+                softmax_scale=softmax_scale,
+                scheduler_metadata=scheduler_metadata,
+                **kwargs,
+            )
+        else:
+            attn_out = self.flash_attn_varlen_func(
+                q=q,
+                k=k,
+                v=maybe_padded_v,
+                return_softmax_lse=return_softmax_lse,
+                softmax_scale=softmax_scale,
+                **kwargs,
+            )
 
         # Unpack the output if there is multiple results
         lse = None
@@ -811,6 +882,7 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
                 softmax_scale=self.scale,
                 causal=False,  # Context is unmasked
                 return_softmax_lse=True,
+                scheduler_metadata=prefill_metadata.chunked_context.scheduler_metatadata[i],
             )
 
             if output is None:
@@ -861,6 +933,7 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
             softmax_scale=self.scale,
             causal=True,
             return_softmax_lse=has_context,
+            scheduler_metadata=attn_metadata.prefill.scheduler_metadata,
         )
 
         if has_context:
