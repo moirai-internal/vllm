@@ -148,10 +148,12 @@ class CudaPlatformBase(Platform):
         # TODO(lucas): handle this more gracefully
         # Note: model_config may be None during testing
         if model_config is not None and model_config.use_mla:
-            use_flashmla = envs.VLLM_ATTENTION_BACKEND == "FLASHMLA"
             from vllm.attention.ops.flashmla import is_flashmla_supported
-            if use_flashmla and is_flashmla_supported()[0] \
-                and cache_config.block_size != 64:
+            use_flashmla = is_flashmla_supported()[0] and \
+                (envs.VLLM_ATTENTION_BACKEND == "FLASHMLA" or
+                    envs.VLLM_ATTENTION_BACKEND is None)
+
+            if use_flashmla and cache_config.block_size != 64:
                 cache_config.block_size = 64
                 logger.info(
                     "Forcing kv cache block size to 64 for FlashMLA backend.")
@@ -199,10 +201,7 @@ class CudaPlatformBase(Platform):
                     logger.info_once(f"Using {name} backend.")
                     return f"vllm.attention.backends.mla.{import_suffix}"
 
-            # prioritize: FlashAttn MLA > FlashMLA > Triton MLA
-            if use_flashattn:
-                return _get_version("FlashAttention MLA",
-                                    "flashattn_mla.FlashAttnMLABackend")
+            # prioritize: FlashMLA > FlashAttn MLA > Triton MLA
             if use_flashmla:
                 if block_size != 64:
                     logger.warning(
@@ -211,6 +210,9 @@ class CudaPlatformBase(Platform):
                         block_size)
                 else:
                     return _get_version("FlashMLA", "flashmla.FlashMLABackend")
+            if use_flashattn:
+                return _get_version("FlashAttention MLA",
+                                    "flashattn_mla.FlashAttnMLABackend")
             if use_triton:
                 return _get_version("Triton MLA",
                                     "triton_mla.TritonMLABackend")
