@@ -7,7 +7,7 @@
 
 constexpr uint64_t THREADS_PER_EXPERT = 512;
 
-__global__ void compute_problem_sizes(const int* __restrict__ topk_ids,
+__global__ void compute_problem_sizes(const int32_t* __restrict__ topk_ids,
                                       int32_t* problem_sizes1,
                                       int32_t* problem_sizes2,
                                       int32_t* atomic_buffer,
@@ -45,7 +45,7 @@ __global__ void compute_expert_offsets(
   }
 }
 
-__global__ void compute_arg_sorts(const int* __restrict__ topk_ids,
+__global__ void compute_arg_sorts(const int32_t* __restrict__ topk_ids,
                                   const int32_t* __restrict__ expert_offsets,
                                   int32_t* input_permutation,
                                   int32_t* output_permutation,
@@ -66,7 +66,7 @@ __global__ void compute_arg_sorts(const int* __restrict__ topk_ids,
       // for "invalid" topk_ids.
       output_permutation[i] = num_tokens;
     } else if (expert_id == blk_expert_id) {
-      int start = atomicAdd(&atomic_buffer[expert_id], 1);
+      int start = atomicAdd(&atomic_buffer[blk_expert_id], 1);
       input_permutation[start] = i / topk;
       output_permutation[i] = start;
     }

@@ -7,7 +7,7 @@ import torch
 
 from vllm import _custom_ops as ops
 from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
-from vllm.model_executor.layers.fused_moe.cutlass_moe import cutlass_moe_fp8
+from vllm.model_executor.layers.fused_moe.cutlass_moe import cutlass_moe
 from vllm.model_executor.layers.fused_moe.fused_moe import (fused_experts,
                                                             fused_topk)
 from vllm.platforms import current_platform
@@ -140,7 +140,7 @@ def run_with_expert_maps(num_experts: int, num_local_experts: int,
 
     def slice_experts():
         slice_params = [
-            "w1_q", "w2_q", "ab_strides1", "ab_strides2", "c_strides1",
+            "w1", "w2", "ab_strides1", "ab_strides2", "c_strides1",
             "c_strides2", "w1_scale", "w2_scale"
         ]
         full_tensors = {
@@ -169,7 +169,7 @@ def run_with_expert_maps(num_experts: int, num_local_experts: int,
 
     out_tensor = torch.zeros_like(cutlass_moe_kwargs["a"])
     for kwargs in slice_experts():
-        out_tensor = out_tensor + cutlass_moe_fp8(**kwargs)
+        out_tensor = out_tensor + cutlass_moe(**kwargs)
 
     return out_tensor
 
@@ -187,8 +187,8 @@ def run_8_bit(moe_tensors: MOETensors8Bit,
 
     kwargs = {
         'a': moe_tensors.a,
-        'w1_q': moe_tensors.w1_q.transpose(1, 2),  # type: ignore[union-attr]
-        'w2_q': moe_tensors.w2_q.transpose(1, 2),  # type: ignore[union-attr]
+        'w1': moe_tensors.w1_q.transpose(1, 2),  # type: ignore[union-attr]
+        'w2': moe_tensors.w2_q.transpose(1, 2),  # type: ignore[union-attr]
         'topk_weights': topk_weights,
         'topk_ids_': topk_ids,
         'ab_strides1': moe_tensors.ab_strides1,
@@ -203,9 +203,37 @@ def run_8_bit(moe_tensors: MOETensors8Bit,
     num_experts = moe_tensors.w1.size(0)
     with_ep = num_local_experts is not None or num_local_experts == num_experts
     if not with_ep:
-        return cutlass_moe_fp8(**kwargs)
+        return cutlass_moe(**kwargs)
 
     assert num_local_experts is not None
+    return run_with_expert_maps(
+        num_experts,
+        num_local_experts,  # type: ignore[arg-type]
+        **kwargs)
+
+
+def run_16_bit(moe_tensors: MOETensors,
+               topk_weights: torch.Tensor,
+               topk_ids: torch.Tensor,
+               num_local_experts: Optional[int] = None) -> torch.Tensor:
+
+    kwargs = {
+        "a": moe_tensors.a,
+        "w1": moe_tensors.w1.transpose(1, 2),
+        "w2": moe_tensors.w2.transpose(1, 2),
+        "topk_weights": topk_weights,
+        "topk_ids_": topk_ids,
+        "ab_strides1": moe_tensors.ab_strides1,
+        "c_strides1": moe_tensors.c_strides1,
+        "ab_strides2": moe_tensors.ab_strides2,
+        "c_strides2": moe_tensors.c_strides2
+    }
+
+    num_experts = moe_tensors.w1.size(0)
+    with_ep = num_local_experts is not None or num_local_experts == num_experts
+    if not with_ep:
+        return cutlass_moe(**kwargs)
+
     return run_with_expert_maps(
         num_experts,
         num_local_experts,  # type: ignore[arg-type]
@@ -250,6 +278,10 @@ def test_cutlass_moe_8_bit_no_graph(
                                       topk_ids)
 
         cutlass_output = run_8_bit(mt, topk_weights, topk_ids)
+
+        #print(triton_output)
+        #print(cutlass_output)
+        #print("*")
 
         torch.testing.assert_close(triton_output,
                                    cutlass_output,
@@ -305,9 +337,105 @@ def test_cutlass_moe_8_bit_cuda_graph(
         graph.replay()
         torch.cuda.synchronize()
 
+        #print(triton_output)
+        #print(cutlass_output)
+        #print("*")
+
         torch.testing.assert_close(triton_output,
                                    cutlass_output,
                                    atol=9e-2,
+                                   rtol=1e-2)
+
+
+@pytest.mark.parametrize("m,n,k", MNK_FACTORS)
+@pytest.mark.parametrize("e", NUM_EXPERTS)
+@pytest.mark.parametrize("topk", TOP_KS)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.half])
+@pytest.mark.skipif(
+    (lambda x: x is None or not ops.cutlass_group_gemm_supported(x.to_int()))(
+        current_platform.get_device_capability()),
+    reason="Grouped gemm is not supported on this GPU type.")
+def test_cutlass_moe_16_bit_no_graph(
+    m: int,
+    n: int,
+    k: int,
+    e: int,
+    topk: int,
+    dtype: torch.dtype,
+):
+    current_platform.seed_everything(7)
+    with set_current_vllm_config(
+            VllmConfig(parallel_config=ParallelConfig(
+                pipeline_parallel_size=1))):
+
+        mt = MOETensors.make_moe_tensors(m, k, n, e, dtype=dtype)
+
+        score = torch.randn((m, e), device="cuda", dtype=dtype)
+        topk_weights, topk_ids = fused_topk(mt.a,
+                                            score,
+                                            topk,
+                                            renormalize=False)
+
+        triton_output = fused_experts(mt.a, mt.w1, mt.w2, topk_weights,
+                                      topk_ids)
+        cutlass_output = run_16_bit(mt, topk_weights, topk_ids)
+
+        # print(triton_output)
+        # print(cutlass_output)
+        # print("*")
+
+        torch.testing.assert_close(triton_output.view(cutlass_output.shape),
+                                   cutlass_output,
+                                   atol=2e-2,
+                                   rtol=1e-2)
+
+
+@pytest.mark.parametrize("m,n,k", MNK_FACTORS)
+@pytest.mark.parametrize("e", NUM_EXPERTS)
+@pytest.mark.parametrize("topk", TOP_KS)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.half])
+@pytest.mark.skipif(
+    (lambda x: x is None or not ops.cutlass_group_gemm_supported(x.to_int()))(
+        current_platform.get_device_capability()),
+    reason="Grouped gemm is not supported on this GPU type.")
+def test_cutlass_moe_16_bit_cuda_graph(
+    m: int,
+    n: int,
+    k: int,
+    e: int,
+    topk: int,
+    dtype: torch.dtype,
+):
+    current_platform.seed_everything(7)
+    with set_current_vllm_config(
+            VllmConfig(parallel_config=ParallelConfig(
+                pipeline_parallel_size=1))):
+
+        mt = MOETensors.make_moe_tensors(m, k, n, e, dtype=dtype)
+
+        score = torch.randn((m, e), device="cuda", dtype=dtype)
+        topk_weights, topk_ids = fused_topk(mt.a,
+                                            score,
+                                            topk,
+                                            renormalize=False)
+
+        triton_output = fused_experts(mt.a, mt.w1, mt.w2, topk_weights,
+                                      topk_ids)
+        stream = torch.cuda.Stream()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            cutlass_output = run_16_bit(mt, topk_weights, topk_ids)
+        torch.cuda.synchronize()
+        graph.replay()
+        torch.cuda.synchronize()
+
+        # print(triton_output)
+        # print(cutlass_output)
+        # print("*")
+
+        torch.testing.assert_close(triton_output,
+                                   cutlass_output,
+                                   atol=2e-2,
                                    rtol=1e-2)
 
 
@@ -357,6 +485,56 @@ def test_cutlass_moe_8_bit_EP(
                                    topk_weights,
                                    topk_ids,
                                    num_local_experts=e // ep_size)
+
+        torch.testing.assert_close(triton_output,
+                                   cutlass_output,
+                                   atol=5e-2,
+                                   rtol=1e-2)
+
+
+@pytest.mark.parametrize("m", [64])
+@pytest.mark.parametrize("n", [1024])
+@pytest.mark.parametrize("k", [4096])
+@pytest.mark.parametrize("e", [16])
+@pytest.mark.parametrize("topk", [1, 8])
+@pytest.mark.parametrize("ep_size", [1, 2, 4, 8, 16])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.skipif(
+    (lambda x: x is None or not ops.cutlass_group_gemm_supported(x.to_int()))(
+        current_platform.get_device_capability()),
+    reason="Grouped gemm is not supported on this GPU type.")
+def test_cutlass_moe_16_bit_EP(
+    m: int,
+    n: int,
+    k: int,
+    e: int,
+    topk: int,
+    ep_size: int,
+    dtype: torch.dtype,
+):
+    current_platform.seed_everything(7)
+    with set_current_vllm_config(
+            VllmConfig(parallel_config=ParallelConfig(
+                pipeline_parallel_size=1))):
+
+        mt = MOETensors.make_moe_tensors(m, k, n, e, dtype=dtype)
+
+        score = torch.randn((m, e), device="cuda", dtype=torch.half)
+        topk_weights, topk_ids = fused_topk(mt.a,
+                                            score,
+                                            topk,
+                                            renormalize=False)
+
+        # Note that we are using the dequantized versions of the tensors.
+        # Using a, w1 and w2 directly results in minor output differences.
+        triton_output = fused_experts(mt.a, mt.w1, mt.w2, topk_weights,
+                                      topk_ids)
+
+        assert e % ep_size == 0, "Cannot distribute experts evenly"
+        cutlass_output = run_16_bit(mt,
+                                    topk_weights,
+                                    topk_ids,
+                                    num_local_experts=e // ep_size)
 
         torch.testing.assert_close(triton_output,
                                    cutlass_output,
