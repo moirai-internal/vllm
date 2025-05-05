@@ -183,7 +183,7 @@ class CpuOffloadingKVCacheManager(KVCacheManager):
             new_blocks = []
         else:
             num_new_blocks = min(
-                num_new_blocks + (0 if cpu_offloading else self.num_preallocate_blocks),
+                num_new_blocks,
                 self.block_pool.get_num_free_blocks(),
                 self.max_num_blocks_per_req - len(req_blocks),
             )
