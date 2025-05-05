@@ -106,6 +106,16 @@ class SampleRequest:
     completion: str = None
 
 
+def get_tokenizer_from_args(
+        args: argparse.Namespace) -> PreTrainedTokenizerBase:
+    tokenizer_id = args.tokenizer if args.tokenizer else args.model
+    return get_tokenizer(
+        tokenizer_id,
+        trust_remote_code=args.trust_remote_code,
+        tokenizer_mode=args.tokenizer_mode,
+    )
+
+
 def sample_requests(tokenizer: PreTrainedTokenizerBase,
                     args: argparse.Namespace) -> list[SampleRequest]:
     if args.dataset == 'json' or args.dataset == 'json-unique':
@@ -294,7 +304,7 @@ async def get_request(
 
 
 def calculate_metrics(
-    input_requests: list[tuple[str, int, int]],
+    input_requests: list[SampleRequest],
     outputs: list[RequestFuncOutput],
     dur_s: float,
     tokenizer: PreTrainedTokenizerBase,
@@ -398,6 +408,84 @@ def calculate_metrics(
     return metrics, actual_output_lens
 
 
+def print_metrics_to_console(
+        metrics: BenchmarkMetrics,
+        benchmark_duration: float,
+        selected_percentile_metrics: list[str],
+        goodput_config_dict: Optional[dict[str, float]] = None) -> dict:
+    """
+    Print the benchmark result to the console, also return the result as a dict
+    for further processing (e.g. saving to a file).
+    """
+    print("{s:{c}^{n}}".format(s=' Benchmark Result ', n=50, c='='))
+    print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
+    print("{:<40} {:<10.2f}".format("Benchmark duration (s):",
+                                    benchmark_duration))
+    print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
+    print("{:<40} {:<10}".format("Total generated tokens:",
+                                 metrics.total_output))
+    print("{:<40} {:<10.2f}".format("Request throughput (req/s):",
+                                    metrics.request_throughput))
+    if goodput_config_dict:
+        print("{:<40} {:<10.2f}".format("Request goodput (req/s):",
+                                        metrics.request_goodput))
+    print("{:<40} {:<10.2f}".format("Output token throughput (tok/s):",
+                                    metrics.output_throughput))
+    print("{:<40} {:<10.2f}".format("Total Token throughput (tok/s):",
+                                    metrics.total_token_throughput))
+
+    result = {
+        "duration": benchmark_duration,
+        "completed": metrics.completed,
+        "total_input_tokens": metrics.total_input,
+        "total_output_tokens": metrics.total_output,
+        "request_throughput": metrics.request_throughput,
+        "output_throughput": metrics.output_throughput,
+        "total_token_throughput": metrics.total_token_throughput,
+    }
+
+    def process_one_metric(
+        # E.g., "ttft"
+        metric_attribute_name: str,
+        # E.g., "TTFT"
+        metric_name: str,
+        # E.g., "Time to First Token"
+        metric_header: str,
+    ):
+        # This function prints and adds statistics of the specified
+        # metric.
+        if metric_attribute_name not in selected_percentile_metrics:
+            return
+        print("{s:{c}^{n}}".format(s=metric_header, n=50, c='-'))
+        print("{:<40} {:<10.2f}".format(
+            f"Mean {metric_name} (ms):",
+            getattr(metrics, f"mean_{metric_attribute_name}_ms")))
+        print("{:<40} {:<10.2f}".format(
+            f"Median {metric_name} (ms):",
+            getattr(metrics, f"median_{metric_attribute_name}_ms")))
+        result[f"mean_{metric_attribute_name}_ms"] = getattr(
+            metrics, f"mean_{metric_attribute_name}_ms")
+        result[f"median_{metric_attribute_name}_ms"] = getattr(
+            metrics, f"median_{metric_attribute_name}_ms")
+        result[f"std_{metric_attribute_name}_ms"] = getattr(
+            metrics, f"std_{metric_attribute_name}_ms")
+        for p, value in getattr(metrics,
+                                f"percentiles_{metric_attribute_name}_ms"):
+            p_word = str(int(p)) if int(p) == p else str(p)
+            print("{:<40} {:<10.2f}".format(f"P{p_word} {metric_name} (ms):",
+                                            value))
+            result[f"p{p_word}_{metric_attribute_name}_ms"] = value
+
+    process_one_metric("ttft", "TTFT", "Time to First Token")
+    process_one_metric("tpot", "TPOT",
+                       "Time per Output Token (excl. 1st token)")
+    process_one_metric("itl", "ITL", "Inter-token Latency")
+    process_one_metric("e2el", "E2EL", "End-to-end Latency")
+    print("=" * 50)
+
+    return result
+
+
 async def benchmark(
     backend: str,
     api_url: str,
@@ -416,7 +504,7 @@ async def benchmark(
     structured_output_ratio: float,
     structured_output_backend: str,
     goodput_config_dict: Optional[dict[str, float]] = None,
-):
+) -> tuple[dict, list[dict]]:
     if backend in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[backend]
     else:
@@ -548,38 +636,15 @@ async def benchmark(
         goodput_config_dict=goodput_config_dict,
     )
 
-    print("{s:{c}^{n}}".format(s=' Serving Benchmark Result ', n=50, c='='))
-    print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
-    print("{:<40} {:<10.2f}".format("Benchmark duration (s):",
-                                    benchmark_duration))
-    print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
-    print("{:<40} {:<10}".format("Total generated tokens:",
-                                 metrics.total_output))
-    print("{:<40} {:<10.2f}".format("Request throughput (req/s):",
-                                    metrics.request_throughput))
-    if goodput_config_dict:
-        print("{:<40} {:<10.2f}".format("Request goodput (req/s):",
-                                        metrics.request_goodput))
-    print("{:<40} {:<10.2f}".format("Output token throughput (tok/s):",
-                                    metrics.output_throughput))
-    print("{:<40} {:<10.2f}".format("Total Token throughput (tok/s):",
-                                    metrics.total_token_throughput))
+    ret = [{
+        'generated': output.generated_text,
+        'expected': gt
+    } for output, gt in zip(outputs, expected)]
 
-    result = {
-        "duration":
-        benchmark_duration,
-        "completed":
-        metrics.completed,
-        "total_input_tokens":
-        metrics.total_input,
-        "total_output_tokens":
-        metrics.total_output,
-        "request_throughput":
-        metrics.request_throughput,
-        "output_throughput":
-        metrics.output_throughput,
-        "total_token_throughput":
-        metrics.total_token_throughput,
+    result = print_metrics_to_console(metrics, benchmark_duration,
+                                      selected_percentile_metrics,
+                                      goodput_config_dict)
+    result.update({
         "ttft_description":
         pd.Series([output.ttft for output in outputs]).describe().to_dict(),
         "tpot_description":
@@ -590,57 +655,12 @@ async def benchmark(
         "ttfts": [output.ttft for output in outputs],
         "itls": [output.itl for output in outputs],
         "errors": [output.error for output in outputs],
-    }
-
-    ret = [{
-        'generated': output.generated_text,
-        'expected': gt
-    } for output, gt in zip(outputs, expected)]
-
-    def process_one_metric(
-        # E.g., "ttft"
-        metric_attribute_name: str,
-        # E.g., "TTFT"
-        metric_name: str,
-        # E.g., "Time to First Token"
-        metric_header: str,
-    ):
-        # This function prints and adds statistics of the specified
-        # metric.
-        if metric_attribute_name not in selected_percentile_metrics:
-            return
-        print("{s:{c}^{n}}".format(s=metric_header, n=50, c='-'))
-        print("{:<40} {:<10.2f}".format(
-            f"Mean {metric_name} (ms):",
-            getattr(metrics, f"mean_{metric_attribute_name}_ms")))
-        print("{:<40} {:<10.2f}".format(
-            f"Median {metric_name} (ms):",
-            getattr(metrics, f"median_{metric_attribute_name}_ms")))
-        result[f"mean_{metric_attribute_name}_ms"] = getattr(
-            metrics, f"mean_{metric_attribute_name}_ms")
-        result[f"median_{metric_attribute_name}_ms"] = getattr(
-            metrics, f"median_{metric_attribute_name}_ms")
-        result[f"std_{metric_attribute_name}_ms"] = getattr(
-            metrics, f"std_{metric_attribute_name}_ms")
-        for p, value in getattr(metrics,
-                                f"percentiles_{metric_attribute_name}_ms"):
-            p_word = str(int(p)) if int(p) == p else str(p)
-            print("{:<40} {:<10.2f}".format(f"P{p_word} {metric_name} (ms):",
-                                            value))
-            result[f"p{p_word}_{metric_attribute_name}_ms"] = value
-
-    process_one_metric("ttft", "TTFT", "Time to First Token")
-    process_one_metric("tpot", "TPOT",
-                       "Time per Output Token (excl. 1st token)")
-    process_one_metric("itl", "ITL", "Inter-token Latency")
-    process_one_metric("e2el", "E2EL", "End-to-end Latency")
-
-    print("=" * 50)
+    })
 
     return result, ret
 
 
-def evaluate(ret, args):
+def evaluate(ret: list[dict], args: argparse.Namespace) -> Optional[float]:
 
     def _eval_correctness_json(expected, actual):
         # extract json string from string using regex
@@ -717,28 +737,7 @@ def check_goodput_args(args):
     return goodput_config_dict
 
 
-def main(args: argparse.Namespace):
-    print(args)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-
-    backend = args.backend
-    model_id = args.model
-    tokenizer_id = args.tokenizer if args.tokenizer is not None else args.model
-
-    if args.base_url is not None:
-        api_url = f"{args.base_url}{args.endpoint}"
-        base_url = f"{args.base_url}"
-    else:
-        api_url = f"http://{args.host}:{args.port}{args.endpoint}"
-        base_url = f"http://{args.host}:{args.port}"
-
-    tokenizer = get_tokenizer(
-        tokenizer_id,
-        trust_remote_code=args.trust_remote_code,
-        tokenizer_mode=args.tokenizer_mode,
-    )
-
+def fill_structure_type(args: argparse.Namespace):
     if args.dataset == 'grammar':
         args.structure_type = 'guided_grammar'
     elif args.dataset == 'regex':
@@ -747,6 +746,25 @@ def main(args: argparse.Namespace):
         args.structure_type = 'guided_choice'
     else:
         args.structure_type = 'guided_json'
+
+
+def main(args: argparse.Namespace):
+    print(args)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    backend = args.backend
+    model_id = args.model
+
+    if args.base_url is not None:
+        api_url = f"{args.base_url}{args.endpoint}"
+        base_url = f"{args.base_url}"
+    else:
+        api_url = f"http://{args.host}:{args.port}{args.endpoint}"
+        base_url = f"http://{args.host}:{args.port}"
+
+    tokenizer = get_tokenizer_from_args(args)
+    fill_structure_type(args)
 
     if args.no_structured_output:
         args.structured_output_ratio = 0
@@ -799,7 +817,7 @@ def main(args: argparse.Namespace):
             "model_id":
             model_id,
             "tokenizer_id":
-            tokenizer_id,
+            args.tokenizer if args.tokenizer else args.model,
             "num_prompts":
             args.num_prompts,
             "request_rate":
@@ -822,9 +840,89 @@ def main(args: argparse.Namespace):
             json.dump(results, outfile, indent=4)
 
 
-if __name__ == "__main__":
+def get_structured_output_argparser():
     parser = FlexibleArgumentParser(
-        description="Benchmark the online serving throughput.")
+        description="Benchmark the structured output throughput.")
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        help="Name of the model.",
+    )
+    parser.add_argument("--dataset",
+                        default='json',
+                        choices=[
+                            'json', 'json-unique', 'grammar', 'regex',
+                            'choice', 'xgrammar_bench'
+                        ])
+    parser.add_argument("--json-schema-path",
+                        type=str,
+                        default=None,
+                        help="Path to json schema.")
+    parser.add_argument(
+        "--num-prompts",
+        type=int,
+        default=1000,
+        help="Number of prompts to process.",
+    )
+    parser.add_argument(
+        "--output-len",
+        type=int,
+        default=128,
+        help="Number of output tokens.",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Trust remote code from huggingface",
+    )
+    parser.add_argument(
+        "--disable-tqdm",
+        action="store_true",
+        help="Specify to disable tqdm progress bar.",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Use Torch Profiler. The endpoint must be launched with "
+        "VLLM_TORCH_PROFILER_DIR to enable profiler.",
+    )
+    parser.add_argument("--structured-output-ratio",
+                        type=float,
+                        default=1.0,
+                        help="Ratio of Structured Outputs requests")
+    parser.add_argument("--structured-output-backend",
+                        type=str,
+                        choices=[
+                            "outlines", "lm-format-enforcer", "xgrammar",
+                            "guidance", "auto"
+                        ],
+                        default="auto",
+                        help="Backend to use for structured outputs")
+    parser.add_argument(
+        "--tokenizer",
+        type=str,
+        help=
+        "Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
+    )
+    parser.add_argument(
+        "--tokenizer-mode",
+        type=str,
+        default="auto",
+        help=
+        "Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
+    )
+    parser.add_argument(
+        "--ignore-eos",
+        action="store_true",
+        help="Set ignore_eos flag when sending the benchmark request."
+        "Warning: ignore_eos is not supported in deepspeed_mii and tgi.")
+    return parser
+
+
+if __name__ == "__main__":
+    parser = get_structured_output_argparser()
     parser.add_argument(
         "--backend",
         type=str,
@@ -846,16 +944,6 @@ if __name__ == "__main__":
         default="/v1/completions",
         help="API endpoint.",
     )
-    parser.add_argument("--dataset",
-                        default='json',
-                        choices=[
-                            'json', 'json-unique', 'grammar', 'regex',
-                            'choice', 'xgrammar_bench'
-                        ])
-    parser.add_argument("--json-schema-path",
-                        type=str,
-                        default=None,
-                        help="Path to json schema.")
     parser.add_argument(
         "--max-concurrency",
         type=int,
@@ -868,37 +956,6 @@ if __name__ == "__main__":
         "to execute at a time. This means that when used in combination, the "
         "actual request rate may be lower than specified with --request-rate, "
         "if the server is not processing requests fast enough to keep up.")
-    parser.add_argument(
-        "--model",
-        type=str,
-        required=True,
-        help="Name of the model.",
-    )
-    parser.add_argument(
-        "--tokenizer",
-        type=str,
-        help=
-        "Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
-    )
-    parser.add_argument(
-        "--tokenizer-mode",
-        type=str,
-        default="auto",
-        help=
-        "Name or path of the tokenizer, if not using the default tokenizer.",  # noqa: E501
-    )
-    parser.add_argument(
-        "--num-prompts",
-        type=int,
-        default=1000,
-        help="Number of prompts to process.",
-    )
-    parser.add_argument(
-        "--output-len",
-        type=int,
-        default=128,
-        help="Number of output tokens.",
-    )
     parser.add_argument(
         "--request-rate",
         type=float,
@@ -920,27 +977,10 @@ if __name__ == "__main__":
         "bursty requests. A higher burstiness value (burstiness > 1) "
         "results in a more uniform arrival of requests.",
     )
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--trust-remote-code",
-        action="store_true",
-        help="Trust remote code from huggingface",
-    )
-    parser.add_argument(
-        "--disable-tqdm",
-        action="store_true",
-        help="Specify to disable tqdm progress bar.",
-    )
     parser.add_argument(
         "--save-results",
         action="store_true",
         help="Specify to save benchmark results to a json file",
-    )
-    parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="Use Torch Profiler. The endpoint must be launched with "
-        "VLLM_TORCH_PROFILER_DIR to enable profiler.",
     )
     parser.add_argument(
         "--result-dir",
@@ -958,11 +998,6 @@ if __name__ == "__main__":
         "{backend}-{args.request_rate}qps-{base_model_id}-{current_dt}.json"
         " format.",
     )
-    parser.add_argument(
-        "--ignore-eos",
-        action="store_true",
-        help="Set ignore_eos flag when sending the benchmark request."
-        "Warning: ignore_eos is not supported in deepspeed_mii and tgi.")
     parser.add_argument(
         "--percentile-metrics",
         type=str,
@@ -996,18 +1031,6 @@ if __name__ == "__main__":
                         action='store_true',
                         default=False,
                         help="Whether to disable JSON decoding or not.")
-    parser.add_argument("--structured-output-ratio",
-                        type=float,
-                        default=1.0,
-                        help="Ratio of Structured Outputs requests")
-    parser.add_argument("--structured-output-backend",
-                        type=str,
-                        choices=[
-                            "outlines", "lm-format-enforcer", "xgrammar",
-                            "guidance", "auto"
-                        ],
-                        default="auto",
-                        help="Backend to use for structured outputs")
 
     args = parser.parse_args()
     main(args)
