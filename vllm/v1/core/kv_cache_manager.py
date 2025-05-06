@@ -95,7 +95,7 @@ class KVCacheManager:
         return stats
 
     def get_computed_blocks(
-            self, request: Request) -> tuple[list[KVCacheBlock], int]:
+            self, request: Request) -> tuple[list[KVCacheBlock], list[KVCacheBlock], int]:
         """Get the computed (cached) blocks for the request.
         Note that the computed blocks must be full.
 
@@ -104,12 +104,13 @@ class KVCacheManager:
 
         Returns:
             A tuple containing:
-                - A list of blocks that are computed for the request.
+                - A list of gpu blocks that are computed for the request.
+                - A list of cpu blocks that are computed for the request(empty list here).
                 - The number of computed tokens.
         """
         if not self.enable_caching:
             # Prefix caching is disabled.
-            return [], 0
+            return [], [], 0
 
         # The block hashes for the request may already be computed
         # if the scheduler has tried to schedule the request before.
@@ -124,7 +125,7 @@ class KVCacheManager:
             self.prefix_cache_stats.requests += 1
         # When the request requires prompt logprobs, we skip prefix caching.
         if request.sampling_params.prompt_logprobs is not None:
-            return [], 0
+            return [], [], 0
 
         if len(block_hashes) * self.block_size == request.num_tokens:
             # When prompt length is divisible by the block size and all
@@ -157,7 +158,7 @@ class KVCacheManager:
         # sharing, `num_computed_tokens` is always a multiple of
         # `block_size`.
         num_computed_tokens = len(computed_blocks) * self.block_size
-        return computed_blocks, num_computed_tokens
+        return computed_blocks, [], num_computed_tokens
 
     def allocate_slots(
         self,
@@ -165,6 +166,7 @@ class KVCacheManager:
         num_tokens: int,
         new_computed_blocks: Optional[list[KVCacheBlock]] = None,
         num_lookahead_tokens: int = 0,
+        new_computed_cpu_blocks: Optional[list[KVCacheBlock]] = None,
     ) -> Optional[list[KVCacheBlock]]:
         """Add slots for a request with new tokens to append.
 
@@ -178,6 +180,8 @@ class KVCacheManager:
             num_lookahead_tokens: The number of speculative tokens to allocate.
                 This is used by spec decode proposers with kv-cache such 
                 as eagle.
+            new_computed_cpu_blocks: A list of new computed cpu blocks just
+                hitting the prefix caching(no use here).
 
         Blocks layout:
         ```
@@ -391,3 +395,9 @@ class KVCacheManager:
             A list of KV cache events.
         """
         return self.block_pool.take_events()
+
+    def get_gpu_cpu_evict_count(self) -> tuple[int, int]:
+        """
+        Get GPU evict count and CPU evict count.
+        """
+        return self.block_pool.get_evict_count(), 0

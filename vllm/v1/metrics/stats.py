@@ -31,6 +31,7 @@ class SchedulerStats:
 
     num_running_reqs: int = 0
     num_waiting_reqs: int = 0
+    gpu_evict_count: int = 0
 
     gpu_cache_usage: float = 0.0
 
@@ -38,6 +39,12 @@ class SchedulerStats:
         default_factory=PrefixCacheStats)
 
     spec_decoding_stats: Optional[SpecDecodingStats] = None
+
+    cpu_cache_usage: Optional[float] = None
+    cpu_prefix_cache_stats: Optional[PrefixCacheStats] = None
+    swap_out_count: Optional[int] = None
+    swap_in_count: Optional[int] = None
+    cpu_evict_count: Optional[int] = None
 
 
 @dataclass

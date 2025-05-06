@@ -151,6 +151,8 @@ def bind_kv_cache(
     kv_caches: dict[str, torch.Tensor],
     forward_context: dict[str, "Attention"],
     runner_kv_caches: list[torch.Tensor],
+    cpu_kv_caches: Optional[dict[str, torch.Tensor]] = None,
+    runner_cpu_kv_caches: Optional[list[torch.Tensor]] = None,
 ) -> None:
     """
     Bind the allocated KV cache to both ModelRunner and forward context so
@@ -159,14 +161,16 @@ def bind_kv_cache(
     This function:
       1) Fills the ModelRunner's kv cache list (`runner_kv_caches`) with
          kv_caches.
-      2) Associates each attention layer in the `forward_context` with its 
+      2) Associates each attention layer in the `forward_context` with its
          corresponding KV cache in kv_caches.
 
     Args:
         kv_caches: The allocated kv_caches with layer names as keys.
-        forward_context: The global forward context containing all Attention 
-        layers with layer names as keys.
         runner_kv_caches: The kv_cache declared by ModelRunner.
+        forward_context: The global forward context containing all Attention
+        layers with layer names as keys.
+        cpu_kv_caches: The allocated cpu kv_caches with layer names as keys.
+        runner_cpu_kv_caches: The cpu kv_cache declared by ModelRunner.
     """
     # Bind kv_caches to ModelRunner
     assert len(runner_kv_caches) == 0
@@ -185,6 +189,8 @@ def bind_kv_cache(
             raise NotImplementedError
         layer_name = layer_names[0]
         runner_kv_caches.append(kv_caches[layer_name])
+        if cpu_kv_caches is not None and runner_cpu_kv_caches is not None:
+            runner_cpu_kv_caches.append(cpu_kv_caches[layer_name])
 
     # Bind kv_caches to forward context
     for layer_name, kv_cache in kv_caches.items():

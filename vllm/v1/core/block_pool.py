@@ -66,6 +66,8 @@ class BlockPool:
         self.enable_kv_cache_events = enable_kv_cache_events
         self.kv_event_queue: list[KVCacheEvent] = []
 
+        self.evict_count = 0
+
     def get_cached_block(self,
                          block_hash: BlockHashType) -> Optional[KVCacheBlock]:
         """Get a cached block by the block hash, or None if cache miss.
@@ -228,6 +230,7 @@ class BlockPool:
         """
         block_hash = block.block_hash
         if block_hash and block_hash in self.cached_block_hash_to_block:
+            self.evict_count += 1
             block.reset_hash()
             del self.cached_block_hash_to_block[block_hash][block.block_id]
 
@@ -288,6 +291,9 @@ class BlockPool:
         # Remove all hashes so that no new blocks will hit.
         self.cached_block_hash_to_block = defaultdict(dict)
 
+        # reset evict count
+        self.evict_count = 0
+
         # Remove all hashes from all blocks.
         for block in self.blocks:
             block.reset_hash()
@@ -326,3 +332,6 @@ class BlockPool:
         events = self.kv_event_queue
         self.kv_event_queue = []
         return events
+
+    def get_evict_count(self) -> int:
+        return self.evict_count

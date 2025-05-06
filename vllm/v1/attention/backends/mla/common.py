@@ -250,6 +250,14 @@ class MLACommonBackend(AttentionBackend):
         return (num_blocks, block_size, head_size)
 
     @staticmethod
+    def swap_blocks(
+        src_kv_cache: torch.Tensor,
+        dst_kv_cache: torch.Tensor,
+        src_to_dst: torch.Tensor,
+    ) -> None:
+        ops.swap_blocks(src_kv_cache, dst_kv_cache, src_to_dst)
+
+    @staticmethod
     def get_supported_head_sizes() -> list[int]:
         return [576]
 

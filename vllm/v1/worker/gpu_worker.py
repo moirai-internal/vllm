@@ -326,6 +326,9 @@ class Worker(WorkerBase):
             max_size=max_size,
         )
 
+    def swap_blocks(self, d2h_map: dict[int, int], h2d_map: dict[int, int]):
+        self.model_runner.swap_blocks(d2h_map, h2d_map)
+
 
 def init_worker_distributed_environment(
     vllm_config: VllmConfig,

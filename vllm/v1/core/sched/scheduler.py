@@ -14,6 +14,7 @@ from vllm.distributed.kv_transfer.kv_connector.factory import (
 from vllm.distributed.kv_transfer.kv_connector.v1 import KVConnectorRole
 from vllm.logger import init_logger
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
+from vllm.v1.core.cpu_offloading_kv_cache_manager import CpuOffloadingKVCacheManager
 from vllm.v1.core.encoder_cache_manager import (EncoderCacheManager,
                                                 compute_encoder_budget)
 from vllm.v1.core.kv_cache_manager import KVCacheManager
@@ -133,16 +134,29 @@ class Scheduler(SchedulerInterface):
                 self.use_eagle = True
                 self.num_lookahead_tokens = self.num_spec_tokens
 
+        self.enable_cpu_offloading = self.cache_config.enable_cpu_offloading
         # Create the KV cache manager.
-        self.kv_cache_manager = KVCacheManager(
-            kv_cache_config=kv_cache_config,
-            max_model_len=self.max_model_len,
-            enable_caching=self.cache_config.enable_prefix_caching,
-            caching_hash_algo=self.cache_config.prefix_caching_hash_algo,
-            use_eagle=self.use_eagle,
-            log_stats=self.log_stats,
-            enable_kv_cache_events=self.enable_kv_cache_events,
-        )
+        if self.enable_cpu_offloading:
+            self.kv_cache_manager = CpuOffloadingKVCacheManager(
+                kv_cache_config=kv_cache_config,
+                max_model_len=self.max_model_len,
+                enable_caching=self.cache_config.enable_prefix_caching,
+                caching_hash_algo=self.cache_config.prefix_caching_hash_algo,
+                use_eagle=self.use_eagle,
+                log_stats=self.log_stats,
+                enable_kv_cache_events=self.enable_kv_cache_events,
+                offloading_blocks_threshold=self.cache_config.offloading_blocks_threshold
+            )
+        else:
+            self.kv_cache_manager = KVCacheManager(
+                kv_cache_config=kv_cache_config,
+                max_model_len=self.max_model_len,
+                enable_caching=self.cache_config.enable_prefix_caching,
+                caching_hash_algo=self.cache_config.prefix_caching_hash_algo,
+                use_eagle=self.use_eagle,
+                log_stats=self.log_stats,
+                enable_kv_cache_events=self.enable_kv_cache_events,
+            )
 
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
@@ -180,6 +194,16 @@ class Scheduler(SchedulerInterface):
 
         # For logging.
         scheduled_timestamp = time.monotonic()
+
+        if self.enable_cpu_offloading:
+            # For cpu offloading, when the block is full, it triggers a swap out,
+            # but we must submit it to the worker in the next step
+            # get the swap out map result in the last step
+            d2h_swap_map = self.kv_cache_manager.get_d2h_swap_map()
+            # and then clear swap out map for current step
+            self.kv_cache_manager.clear_step_d2h_swap_map()
+        else:
+            d2h_swap_map = {}
 
         # First, schedule the RUNNING requests.
         req_index = 0
@@ -331,7 +355,7 @@ class Scheduler(SchedulerInterface):
                     continue
 
                 # Get already-cached tokens.
-                computed_blocks, num_computed_tokens = \
+                computed_blocks, computed_cpu_blocks, num_computed_tokens = \
                     self.kv_cache_manager.get_computed_blocks(
                         request)
 
@@ -373,7 +397,8 @@ class Scheduler(SchedulerInterface):
                     request,
                     num_new_tokens + num_external_tokens,
                     computed_blocks,
-                    num_lookahead_tokens=self.num_lookahead_tokens,
+                    self.num_lookahead_tokens,
+                    computed_cpu_blocks,
                 )
                 if new_blocks is None:
                     # The request cannot be scheduled.
@@ -477,6 +502,18 @@ class Scheduler(SchedulerInterface):
                 resumed_from_preemption=False,
             ) for req in scheduled_running_reqs
         ]
+
+        if self.enable_cpu_offloading:
+            # For cpu offloading, when gpu block misses and cpu hits,
+            # it triggers a swap in, we must submit it to the worker
+            # in the current step
+            # get the swap in map result in the current step
+            h2d_swap_map = self.kv_cache_manager.get_h2d_swap_map()
+            # and then clear swap in map for next step
+            self.kv_cache_manager.clear_step_h2d_swap_map()
+        else:
+            h2d_swap_map = {}
+
         scheduler_output = SchedulerOutput(
             scheduled_new_reqs=new_reqs_data,
             scheduled_cached_reqs=resumed_reqs_data + running_reqs_data,
@@ -493,6 +530,8 @@ class Scheduler(SchedulerInterface):
             free_encoder_input_ids=self.encoder_cache_manager.get_freed_ids(),
             structured_output_request_ids=structured_output_request_ids,
             grammar_bitmask=grammar_bitmask,
+            d2h_swap_map=d2h_swap_map,
+            h2d_swap_map=h2d_swap_map,
         )
 
         # NOTE(Kuntai): this function is designed for multiple purposes:
@@ -839,12 +878,28 @@ class Scheduler(SchedulerInterface):
             return None
         prefix_cache_stats = self.kv_cache_manager.make_prefix_cache_stats()
         assert prefix_cache_stats is not None
+
+        cpu_cache_usage = self.kv_cache_manager.cpu_usage \
+            if self.enable_cpu_offloading else None
+        cpu_prefix_cache_stats = self.kv_cache_manager.make_cpu_prefix_cache_stats() \
+            if self.enable_cpu_offloading else None
+        swap_out_count = self.kv_cache_manager.get_swap_out_count() \
+            if self.enable_cpu_offloading else None
+        swap_in_count = self.kv_cache_manager.get_swap_in_count() \
+            if self.enable_cpu_offloading else None
+
         return SchedulerStats(
             num_running_reqs=len(self.running),
             num_waiting_reqs=len(self.waiting),
             gpu_cache_usage=self.kv_cache_manager.usage,
             prefix_cache_stats=prefix_cache_stats,
             spec_decoding_stats=spec_decoding_stats,
+            cpu_cache_usage=cpu_cache_usage,
+            cpu_prefix_cache_stats=cpu_prefix_cache_stats,
+            swap_out_count=swap_out_count,
+            swap_in_count=swap_in_count,
+            gpu_evict_count=self.kv_cache_manager.get_gpu_cpu_evict_count()[0],
+            cpu_evict_count=self.kv_cache_manager.get_gpu_cpu_evict_count()[1],
         )
 
     def make_spec_decoding_stats(

@@ -63,6 +63,10 @@ class PrefixCachingMetrics:
         # A deque of (requests, queries, hits) for the most recent requests.
         self.query_queue: deque[tuple[int, int, int]] = deque()
 
+        self.aggregated_requests_since_reset = 0
+        self.aggregated_query_total_since_reset = 0
+        self.aggregated_query_hit_since_reset = 0
+
     def observe(self, stats: PrefixCacheStats):
         """Observe the prefix caching for a set of requests.
 
@@ -86,6 +90,10 @@ class PrefixCachingMetrics:
         self.aggregated_query_total += stats.queries
         self.aggregated_query_hit += stats.hits
 
+        self.aggregated_requests_since_reset += stats.requests
+        self.aggregated_query_total_since_reset += stats.queries
+        self.aggregated_query_hit_since_reset += stats.hits
+
         # Remove the oldest stats if the number of requests exceeds.
         if self.aggregated_requests > self.max_recent_requests:
             old_requests, old_queries, old_hits = self.query_queue.popleft()
@@ -100,6 +108,10 @@ class PrefixCachingMetrics:
         self.aggregated_query_hit = 0
         self.query_queue.clear()
 
+        self.aggregated_requests_since_reset = 0
+        self.aggregated_query_total_since_reset = 0
+        self.aggregated_query_hit_since_reset = 0
+
     @property
     def hit_rate(self) -> float:
         """Calculate the hit rate for the past N requests."""
@@ -107,6 +119,11 @@ class PrefixCachingMetrics:
             return 0.0
         return self.aggregated_query_hit / self.aggregated_query_total
 
+    @property
+    def avg_hit_rate(self) -> float:
+        if self.aggregated_query_total_since_reset == 0:
+            return 0.0
+        return self.aggregated_query_hit_since_reset / self.aggregated_query_total_since_reset
 
 @dataclass
 class KVCacheBlock:
@@ -121,8 +138,13 @@ class KVCacheBlock:
 
     # Used to construct a doubly linked list for free blocks.
     # These two attributes should only be manipulated by FreeKVCacheBlockQueue.
+    # Not used for CPU blocks.
     prev_free_block: Optional["KVCacheBlock"] = None
     next_free_block: Optional["KVCacheBlock"] = None
+
+    # cpu offloading block
+    # Not used for CPU blocks.
+    cpu_offloading_block: Optional["KVCacheBlock"] = None
 
     def incr_ref(self):
         self.ref_cnt += 1
@@ -605,7 +627,8 @@ def is_kv_cache_type_uniform(kv_cache_spec: dict[str, KVCacheSpec]) -> bool:
 
 def _get_kv_cache_config_uniform_type(vllm_config: VllmConfig,
                                       kv_cache_spec: dict[str, KVCacheSpec],
-                                      available_memory: int) -> KVCacheConfig:
+                                      available_memory: int,
+                                      available_cpu_swap_memory: int) -> KVCacheConfig:
     """
     Generates the KV cache configuration for a model with one type of KV cache.
     Divide the available memory equally among all layers.
@@ -614,6 +637,7 @@ def _get_kv_cache_config_uniform_type(vllm_config: VllmConfig,
         vllm_config: The global VllmConfig
         kv_cache_spec: The kv cache spec of each attention layer in the model
         available_memory: Memory available for KV cache in bytes.
+        available_cpu_swap_memory: CPU Memory available for swap in bytes.
 
     Returns:
         The generated KVCacheConfig
@@ -626,6 +650,9 @@ def _get_kv_cache_config_uniform_type(vllm_config: VllmConfig,
     num_blocks = int(available_memory // page_size // len(kv_cache_spec))
     num_blocks = max(num_blocks, 0)
 
+    num_cpu_blocks = int(available_cpu_swap_memory // page_size // len(kv_cache_spec))
+    num_cpu_blocks = max(num_cpu_blocks, 0)
+
     if vllm_config.cache_config.num_gpu_blocks_override is not None:
         num_gpu_blocks_override = \
             vllm_config.cache_config.num_gpu_blocks_override
@@ -634,11 +661,12 @@ def _get_kv_cache_config_uniform_type(vllm_config: VllmConfig,
             "num_gpu_blocks_override=%d", num_blocks, num_gpu_blocks_override)
         num_blocks = num_gpu_blocks_override
 
-    num_tokens = num_blocks * vllm_config.cache_config.block_size
-    num_tokens_str = f"{num_tokens:,}"
-    logger.info("GPU KV cache size: %s tokens", num_tokens_str)
+    num_gpu_tokens = num_blocks * vllm_config.cache_config.block_size
+    num_cpu_tokens = num_cpu_blocks * vllm_config.cache_config.block_size
+    logger.info("GPU KV cache size: %s tokens", f"{num_gpu_tokens:,}")
+    logger.info("CPU KV cache size: %s tokens", f"{num_cpu_tokens:,}")
     max_model_len_str = f"{vllm_config.model_config.max_model_len:,}"
-    max_concurrency = num_tokens / vllm_config.model_config.max_model_len
+    max_concurrency = num_gpu_tokens / vllm_config.model_config.max_model_len
     logger.info("Maximum concurrency for %s tokens per request: %.2fx",
                 max_model_len_str, max_concurrency)
 
@@ -649,6 +677,7 @@ def _get_kv_cache_config_uniform_type(vllm_config: VllmConfig,
 
     kv_cache_config = KVCacheConfig(
         num_blocks=num_blocks,
+        num_cpu_blocks=num_cpu_blocks,
         tensors={
             layer_name: KVCacheTensor(size=per_layer_size)
             for layer_name in kv_cache_spec
@@ -688,7 +717,8 @@ def unify_hybrid_kv_cache_specs(kv_cache_spec: dict[str, KVCacheSpec]):
 
 def get_kv_cache_config(vllm_config: VllmConfig,
                         kv_cache_spec: dict[str, KVCacheSpec],
-                        available_memory: int) -> KVCacheConfig:
+                        available_memory: int,
+                        available_cpu_swap_memory: int) -> KVCacheConfig:
     """
     Generates the KV cache configuration for a model
     TODO: support hybrid models with more than one type of KV cache.
@@ -697,6 +727,7 @@ def get_kv_cache_config(vllm_config: VllmConfig,
         vllm_config: The global VllmConfig
         kv_cache_spec: The kv cache spec of each attention layer in the model
         available_memory: Memory available for KV cache in bytes.
+        available_cpu_swap_memory: CPU memory available for swap in bytes.
 
     Returns:
         The generated KVCacheConfigs
@@ -708,7 +739,8 @@ def get_kv_cache_config(vllm_config: VllmConfig,
         # most models. Allocate the same amount of memory for
         # each layer.
         return _get_kv_cache_config_uniform_type(vllm_config, kv_cache_spec,
-                                                 available_memory)
+                                                 available_memory,
+                                                 available_cpu_swap_memory)
 
     raise NotImplementedError
 
@@ -743,7 +775,10 @@ def unify_kv_cache_configs(kv_cache_configs: list[KVCacheConfig]):
     # first `num_blocks` blocks of the tensor.
     min_num_blocks = min(kv_cache_config.num_blocks
                          for kv_cache_config in kv_cache_configs)
+    min_num_cpu_blocks = min(kv_cache_config.num_cpu_blocks
+                         for kv_cache_config in kv_cache_configs)
     for kv_cache_config in kv_cache_configs:
         kv_cache_config.num_blocks = min_num_blocks
+        kv_cache_config.num_cpu_blocks = min_num_cpu_blocks
 
     return kv_cache_configs

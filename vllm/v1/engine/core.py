@@ -134,7 +134,8 @@ class EngineCore:
         # Get the kv cache tensor size
         kv_cache_configs = [
             get_kv_cache_config(vllm_config, kv_cache_spec_one_worker,
-                                available_gpu_memory_one_worker)
+                                available_gpu_memory_one_worker,
+                                vllm_config.cache_config.swap_space_bytes)
             for kv_cache_spec_one_worker, available_gpu_memory_one_worker in
             zip(kv_cache_specs, available_gpu_memory)
         ]
@@ -150,8 +151,12 @@ class EngineCore:
             cfg.num_blocks == kv_cache_configs[0].num_blocks
             for cfg in kv_cache_configs
         ])
+        assert all([
+            cfg.num_cpu_blocks == kv_cache_configs[0].num_cpu_blocks
+            for cfg in kv_cache_configs
+        ])
         num_gpu_blocks = kv_cache_configs[0].num_blocks
-        num_cpu_blocks = 0
+        num_cpu_blocks = kv_cache_configs[0].num_cpu_blocks
         scheduler_kv_cache_config = kv_cache_configs[0]
 
         # Initialize kv cache and warmup the execution
@@ -202,6 +207,23 @@ class EngineCore:
                 scheduler_stats=self.scheduler.make_stats(),
             )
         scheduler_output = self.scheduler.schedule()
+
+        # Swap the kv cache blocks between CPU and GPU.
+        # NOTE: A hidden assumption here is that we need to complete the d2h
+        # swap before the h2d swap, since it is possible that a block that
+        # just got swapped out (i.e. evicted) needs to be swapped in again for
+        # another request. This is currently guaranteed since both are issued
+        # to the current stream.
+        # TODO(meng): make it more explicit.
+        # TODO(meng): This means there is an optimization opportunity here,
+        # where we can get the intersection of h2d destinations and d2h
+        # sources and just do d2d copies.
+        if scheduler_output.d2h_swap_map or scheduler_output.h2d_swap_map:
+            self.model_executor.swap_blocks(
+                scheduler_output.d2h_swap_map,
+                scheduler_output.h2d_swap_map,
+            )
+
         output = self.model_executor.execute_model(scheduler_output)
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, output)  # type: ignore

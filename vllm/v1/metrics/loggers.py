@@ -60,6 +60,7 @@ class LoggingStatLogger(StatLoggerBase):
         self.spec_decoding_logging = SpecDecodingLogging()
         self.last_prompt_throughput: float = 0.0
         self.last_generation_throughput: float = 0.0
+        self.cpu_prefix_caching_metrics = PrefixCachingMetrics()
 
     def _reset(self, now):
         self.last_log_time = now
@@ -91,6 +92,10 @@ class LoggingStatLogger(StatLoggerBase):
             self.spec_decoding_logging.observe(
                 scheduler_stats.spec_decoding_stats)
 
+        if scheduler_stats.cpu_prefix_cache_stats is not None:
+            self.cpu_prefix_caching_metrics.observe(
+                scheduler_stats.cpu_prefix_cache_stats)
+
         self.last_scheduler_stats = scheduler_stats
 
     def log(self):
@@ -119,18 +124,46 @@ class LoggingStatLogger(StatLoggerBase):
             "Avg generation throughput: %.1f tokens/s, "
             "Running: %d reqs, Waiting: %d reqs, "
             "GPU KV cache usage: %.1f%%, "
-            "Prefix cache hit rate: %.1f%%",
+            "GPU Prefix cache hit rate(AVG): %.1f%%, "
+            "GPU Prefix cache hit rate(latest 1000 reqs): %.1f%%, "
+            "GPU total cache hit count: %d, "
+            "Gpu cache hit count in latest 1000 reqs: %d, "
+            "Gpu KV cache evict count: %d",
             self.engine_index,
             prompt_throughput,
             generation_throughput,
             scheduler_stats.num_running_reqs,
             scheduler_stats.num_waiting_reqs,
             scheduler_stats.gpu_cache_usage * 100,
+            self.prefix_caching_metrics.avg_hit_rate * 100,
             self.prefix_caching_metrics.hit_rate * 100,
+            self.prefix_caching_metrics.aggregated_query_hit_since_reset,
+            self.prefix_caching_metrics.aggregated_query_hit,
+            scheduler_stats.gpu_evict_count
         )
 
         if scheduler_stats.spec_decoding_stats is not None:
             self.spec_decoding_logging.log(log_fn=log_fn)
+
+        if scheduler_stats.cpu_prefix_cache_stats is not None:
+            log_fn(
+                "CPU KV cache usage: %.1f%%, "
+                    "CPU prefix cache hit rate(AVG): %.1f%%, "
+                    "CPU prefix cache hit rate(latest 1000 reqs): %.1f%%, "
+                    "CPU total cache hit count: %d, "
+                    "Cpu cache hit count in latest 1000 reqs: %d, "
+                    "swap in count: %d, "
+                    "swap out count: %d, "
+                    "Cpu KV cache evict count: %d",
+                    scheduler_stats.cpu_cache_usage * 100,
+                    self.cpu_prefix_caching_metrics.avg_hit_rate * 100,
+                    self.cpu_prefix_caching_metrics.hit_rate * 100,
+                    self.cpu_prefix_caching_metrics.aggregated_query_hit_since_reset,
+                    self.cpu_prefix_caching_metrics.aggregated_query_hit,
+                    scheduler_stats.swap_in_count,
+                    scheduler_stats.swap_out_count,
+                    scheduler_stats.cpu_evict_count
+            )
 
     def log_engine_initialized(self):
         logger.info(
