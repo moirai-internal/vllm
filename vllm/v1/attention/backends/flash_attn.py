@@ -8,7 +8,7 @@ import torch
 
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
-                                              AttentionMetadata, AttentionType,
+                                              AttentionType,
                                               is_quantized_kv_cache)
 from vllm.attention.layer import Attention
 from vllm.attention.ops.merge_attn_states import merge_attn_states
@@ -26,13 +26,14 @@ if TYPE_CHECKING:
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 if current_platform.is_cuda():
-    from vllm.vllm_flash_attn import (flash_attn_varlen_func,
-                                      get_scheduler_metadata)
+    from vllm.vllm_flash_attn import (  # type: ignore[attr-defined]
+        flash_attn_varlen_func, get_scheduler_metadata)
 
 logger = init_logger(__name__)
 
 
-class FlashAttentionBackend(AttentionBackend):
+class FlashAttentionBackend(AttentionBackend["FlashAttentionMetadata",
+                                             "FlashAttentionMetadataBuilder"]):
 
     accept_output_buffer: bool = True
 
@@ -49,7 +50,7 @@ class FlashAttentionBackend(AttentionBackend):
         return FlashAttentionImpl
 
     @staticmethod
-    def get_metadata_cls() -> type["AttentionMetadata"]:
+    def get_metadata_cls() -> type["FlashAttentionMetadata"]:
         return FlashAttentionMetadata
 
     @staticmethod
@@ -477,9 +478,9 @@ class FlashAttentionImpl(AttentionImpl):
             alibi_slopes = torch.tensor(alibi_slopes, dtype=torch.float32)
         self.alibi_slopes = alibi_slopes
         if sliding_window is None:
-            self.sliding_window = (-1, -1)
+            self.sliding_window = [-1, -1]
         else:
-            self.sliding_window = (sliding_window - 1, 0)
+            self.sliding_window = [sliding_window - 1, 0]
         self.kv_cache_dtype = kv_cache_dtype
         if logits_soft_cap is None:
             # In flash-attn, setting logits_soft_cap as 0 means no soft cap.
@@ -533,6 +534,8 @@ class FlashAttentionImpl(AttentionImpl):
               We use torch's .expand() to avoid duplicating values
         """
         assert output is not None, "Output tensor must be provided."
+        assert self.vllm_flash_attn_version is not None, (
+            "vLLM FlashAttention version is unknown.")
 
         if attn_metadata is None:
             # Profiling run.
@@ -733,7 +736,7 @@ def cascade_attention(
     max_kv_len: int,
     softmax_scale: float,
     alibi_slopes: Optional[torch.Tensor],
-    sliding_window: tuple[int, int],
+    sliding_window: list[int],
     logits_soft_cap: float,
     block_table: torch.Tensor,
     common_prefix_len: int,
@@ -746,8 +749,9 @@ def cascade_attention(
 ) -> torch.Tensor:
     assert alibi_slopes is None, ("Cascade attention does not support ALiBi.")
     # TODO: Support sliding window.
-    assert sliding_window == (-1, -1), (
-        "Cascade attention does not support sliding window.")
+    assert sliding_window == [
+        -1, -1
+    ], ("Cascade attention does not support sliding window.")
 
     num_tokens = query.shape[0]
     block_size = key_cache.shape[-3]

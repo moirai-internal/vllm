@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
+from enum import Enum
 from typing import (TYPE_CHECKING, Any, Dict, Generic, List, Optional,
                     Protocol, Set, Tuple, Type, TypeVar)
 
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
                                                ModelRunnerInputBuilderBase)
 
 
-class AttentionType:
+class AttentionType(str, Enum):
     """
     Attention type.
     Use string to be compatible with `torch.compile`.
@@ -31,7 +32,12 @@ class AttentionType:
     ENCODER_DECODER = "encoder_decoder"
 
 
-class AttentionBackend(ABC):
+AttentionMetadataType = TypeVar("AttentionMetadataType")
+AttentionMetadataBuilderType = TypeVar("AttentionMetadataBuilderType")
+
+
+class AttentionBackend(ABC, Generic[AttentionMetadataType,
+                                    AttentionMetadataBuilderType]):
     """Abstract class for attention backends."""
     # For some attention backends, we allocate an output tensor before
     # calling the custom op. When piecewise cudagraph is enabled, this
@@ -50,7 +56,7 @@ class AttentionBackend(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_metadata_cls() -> Type["AttentionMetadata"]:
+    def get_metadata_cls() -> Type[AttentionMetadataType]:
         raise NotImplementedError
 
     @staticmethod
@@ -59,12 +65,12 @@ class AttentionBackend(ABC):
         raise NotImplementedError
 
     @classmethod
-    def make_metadata(cls, *args, **kwargs) -> "AttentionMetadata":
+    def make_metadata(cls, *args, **kwargs) -> AttentionMetadataType:
         return cls.get_metadata_cls()(*args, **kwargs)
 
     @staticmethod
     @abstractmethod
-    def get_builder_cls() -> Type["AttentionMetadataBuilder"]:
+    def get_builder_cls() -> Type[AttentionMetadataBuilderType]:
         raise NotImplementedError
 
     @staticmethod
@@ -105,7 +111,7 @@ class AttentionBackend(ABC):
 
 
 @dataclass
-class AttentionMetadata:
+class AttentionMetadata(Generic[AttentionMetadataType]):
     """Attention metadata for prefill and decode batched together."""
     # Total number of prefill requests.
     num_prefills: int
@@ -135,14 +141,14 @@ class AttentionMetadata:
 
     @property
     @abstractmethod
-    def prefill_metadata(self) -> Optional["AttentionMetadata"]:
+    def prefill_metadata(self) -> Optional[AttentionMetadataType]:
         """Return the attention metadata that's required to run prefill
         attention."""
         pass
 
     @property
     @abstractmethod
-    def decode_metadata(self) -> Optional["AttentionMetadata"]:
+    def decode_metadata(self) -> Optional[AttentionMetadataType]:
         """Return the attention metadata that's required to run decode
         attention."""
         pass
@@ -161,10 +167,7 @@ class AttentionMetadata:
         }
 
 
-T = TypeVar("T", bound=AttentionMetadata)
-
-
-class AttentionState(ABC, Generic[T]):
+class AttentionState(ABC, Generic[AttentionMetadataType]):
     """Holds attention backend-specific objects reused during the
     lifetime of the model runner."""
 
@@ -179,7 +182,8 @@ class AttentionState(ABC, Generic[T]):
         yield
 
     @abstractmethod
-    def graph_clone(self, batch_size: int) -> "AttentionState[T]":
+    def graph_clone(
+            self, batch_size: int) -> "AttentionState[AttentionMetadataType]":
         """Clone attention state to save in CUDA graph metadata."""
         ...
 
@@ -187,14 +191,14 @@ class AttentionState(ABC, Generic[T]):
     def graph_capture_get_metadata_for_batch(
             self,
             batch_size: int,
-            is_encoder_decoder_model: bool = False) -> T:
+            is_encoder_decoder_model: bool = False) -> AttentionMetadataType:
         """Get attention metadata for CUDA graph capture of batch_size."""
         ...
 
     @abstractmethod
     def get_graph_input_buffers(
             self,
-            attn_metadata: T,
+            attn_metadata: AttentionMetadataType,
             is_encoder_decoder_model: bool = False) -> Dict[str, Any]:
         """Get attention-specific input buffers for CUDA graph capture."""
         ...
@@ -203,7 +207,7 @@ class AttentionState(ABC, Generic[T]):
     def prepare_graph_input_buffers(
             self,
             input_buffers: Dict[str, Any],
-            attn_metadata: T,
+            attn_metadata: AttentionMetadataType,
             is_encoder_decoder_model: bool = False) -> None:
         """In-place modify input buffers dict for CUDA graph replay."""
         ...
@@ -214,7 +218,7 @@ class AttentionState(ABC, Generic[T]):
         ...
 
 
-class AttentionMetadataBuilder(ABC, Generic[T]):
+class AttentionMetadataBuilder(ABC, Generic[AttentionMetadataType]):
     """Abstract class for attention metadata builders."""
 
     @abstractmethod
@@ -229,7 +233,8 @@ class AttentionMetadataBuilder(ABC, Generic[T]):
 
     @abstractmethod
     def build(self, seq_lens: List[int], query_lens: List[int],
-              cuda_graph_pad_size: int, batch_size: int) -> T:
+              cuda_graph_pad_size: int,
+              batch_size: int) -> AttentionMetadataType:
         """Build attention metadata with on-device tensors."""
         raise NotImplementedError
 
@@ -254,7 +259,7 @@ class AttentionLayer(Protocol):
         ...
 
 
-class AttentionImpl(ABC, Generic[T]):
+class AttentionImpl(ABC, Generic[AttentionMetadataType]):
 
     @abstractmethod
     def __init__(
@@ -280,13 +285,14 @@ class AttentionImpl(ABC, Generic[T]):
         key: torch.Tensor,
         value: torch.Tensor,
         kv_cache: torch.Tensor,
-        attn_metadata: T,
+        attn_metadata: AttentionMetadataType,
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         raise NotImplementedError
 
 
-class MLAAttentionImpl(AttentionImpl[T], Generic[T]):
+class MLAAttentionImpl(AttentionImpl[AttentionMetadataType],
+                       Generic[AttentionMetadataType]):
 
     @abstractmethod
     def forward(
@@ -296,7 +302,7 @@ class MLAAttentionImpl(AttentionImpl[T], Generic[T]):
         kv_c_normed: torch.Tensor,
         k_pe: torch.Tensor,
         kv_cache: torch.Tensor,
-        attn_metadata: T,
+        attn_metadata: AttentionMetadataType,
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         raise NotImplementedError
