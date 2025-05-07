@@ -191,7 +191,7 @@ class Attention(nn.Module):
             output_shape = (output_shape
                             if output_shape is not None else query.shape)
             output = torch.empty(output_shape,
-                                 dtype=query.dtype,
+                                 dtype=torch.float8_e4m3fnuz,
                                  device=query.device)
             hidden_size = output_shape[-1]
             # We skip reshaping query, key and value tensors for the MLA
@@ -422,6 +422,7 @@ def unified_attention_with_output(
         attn_metadata = attn_metadata[layer_name]
     self = forward_context.no_compile_layers[layer_name]
     kv_cache = self.kv_cache[forward_context.virtual_engine]
+    self.impl.input_scale = self.input_scale
     self.impl.forward(self,
                       query,
                       key,
