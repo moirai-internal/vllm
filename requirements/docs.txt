@@ -16,3 +16,4 @@ git+https://github.com/hmellor/sphinx-autodoc2.git # sphinx-autodoc2==0.5.0
 cachetools
 -f https://download.pytorch.org/whl/cpu
 torch
+ijson==3.3.0 # Required for hermes tool parsing
