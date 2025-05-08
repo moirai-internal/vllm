@@ -255,19 +255,43 @@ class BlockPool:
                 self.free_block_queue.remove(block)
             block.incr_ref()
 
-    def free_blocks(self, ordered_blocks: Iterable[KVCacheBlock]) -> None:
+    def free_blocks(self,
+                    ordered_blocks: Iterable[KVCacheBlock],
+                    front: bool = False) -> None:
         """Free a list of blocks. The blocks should be ordered by their
         eviction priority, where the first block will be evicted first.
 
         Args:
             ordered_blocks: A list of blocks to free ordered by their eviction
                 priority.
+            front: If True, freed blocks are "prepended"to the free list 
+                (evicted sooner);
+                but still after the truly free blocks.
+                otherwise, appended to the tail (evicted later).
         """
         for block in ordered_blocks:
+            # block_id = block.block_id
             block.decr_ref()
             # null_block should not be added to the free list.
             if block.ref_cnt == 0 and block != self.null_block:
-                self.free_block_queue.append(block)
+                if front:
+                    # logger.info("Freeing block %s with P0 (front=True)",
+                    #             block_id)
+                    # Use append_priority_0 for low priority (evict sooner)
+                    self.free_block_queue.append_priority_0(block)
+                else:
+                    # logger.info("Freeing block %s with P1 (front=False)",
+                    #             block_id)
+                    # Use append for high priority (evict later)
+                    self.free_block_queue.append(block)
+                # Log queue state after adding
+                # current_queue = [
+                #     (b.block_id, b.block_hash.hash_value)
+                #     for b in self.free_block_queue.get_all_free_blocks()
+                #     if b.block_hash is not None
+                # ]
+                # logger.info("Free queue state after freeing "
+                #             "%s: %s", block_id, current_queue)
 
     def reset_prefix_cache(self) -> bool:
         """Reset prefix cache. This function may be used in RLHF

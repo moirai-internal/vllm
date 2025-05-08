@@ -63,6 +63,9 @@ class EngineCoreRequest(
     # belong to, to cover a race condition where the request is sent before
     # a wave finished notification is received.
     current_wave: int = 0
+    # Priority of the request: 0 (normal) or 1 (high). Higher priority requests
+    # have their prefix cache freed last (evicted later).
+    priority: int = 0
 
 
 class EngineCoreEventType(enum.IntEnum):
@@ -106,6 +109,8 @@ class EngineCoreOutput(
     stop_reason: Union[int, str, None] = None
     events: Optional[list[EngineCoreEvent]] = None
 
+    num_cached_tokens: int = 0
+
     @property
     def finished(self) -> bool:
         return self.finish_reason is not None
@@ -138,6 +143,7 @@ class EngineCoreOutputs(
     outputs: list[EngineCoreOutput] = []
     scheduler_stats: Optional[SchedulerStats] = None
     timestamp: float = 0.0
+    num_cached_tokens: int = 0
 
     utility_output: Optional[UtilityOutput] = None
     finished_requests: Optional[set[str]] = None
