@@ -36,13 +36,13 @@ logger = init_logger(__name__)
 class Scheduler(SchedulerInterface):
 
     def __init__(
-        self,
-        vllm_config: VllmConfig,
-        kv_cache_config: KVCacheConfig,
-        structured_output_manager: StructuredOutputManager,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
-        include_finished_set: bool = False,
-        log_stats: bool = False,
+            self,
+            vllm_config: VllmConfig,
+            kv_cache_config: KVCacheConfig,
+            structured_output_manager: StructuredOutputManager,
+            mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
+            include_finished_set: bool = False,
+            log_stats: bool = False,
     ) -> None:
         self.vllm_config = vllm_config
         self.scheduler_config = vllm_config.scheduler_config
@@ -65,8 +65,8 @@ class Scheduler(SchedulerInterface):
             self.scheduler_config.max_num_batched_tokens
         self.max_model_len = self.scheduler_config.max_model_len
         self.enable_kv_cache_events = (
-            self.kv_events_config is not None
-            and self.kv_events_config.enable_kv_cache_events)
+                self.kv_events_config is not None
+                and self.kv_events_config.enable_kv_cache_events)
 
         # Create KVConnector for the Scheduler. Note that each Worker
         # will have a corresponding KVConnector with Role=WORKER.
@@ -206,8 +206,8 @@ class Scheduler(SchedulerInterface):
             if request.has_encoder_inputs:
                 (encoder_inputs_to_schedule, num_new_tokens,
                  new_encoder_budget) = self._try_schedule_encoder_inputs(
-                     request, request.num_computed_tokens, num_new_tokens,
-                     encoder_budget)
+                    request, request.num_computed_tokens, num_new_tokens,
+                    encoder_budget)
 
             if num_new_tokens == 0:
                 # The request cannot be scheduled because one of the following
@@ -359,8 +359,8 @@ class Scheduler(SchedulerInterface):
                 if request.has_encoder_inputs:
                     (encoder_inputs_to_schedule, num_new_tokens,
                      new_encoder_budget) = self._try_schedule_encoder_inputs(
-                         request, num_computed_tokens, num_new_tokens,
-                         encoder_budget)
+                        request, num_computed_tokens, num_new_tokens,
+                        encoder_budget)
                     if num_new_tokens == 0:
                         # The request cannot be scheduled.
                         break
@@ -407,7 +407,7 @@ class Scheduler(SchedulerInterface):
                 if self.lora_config and request.lora_request:
                     scheduled_loras.add(request.lora_request.lora_int_id)
                 req_to_new_block_ids[request.request_id] = (
-                    computed_blocks + new_blocks).get_block_ids()
+                        computed_blocks + new_blocks).get_block_ids()
                 num_scheduled_tokens[request.request_id] = num_new_tokens
                 token_budget -= num_new_tokens
                 request.status = RequestStatus.RUNNING
@@ -522,19 +522,19 @@ class Scheduler(SchedulerInterface):
         return scheduler_output
 
     def _make_cached_request_data(
-        self,
-        request: Request,
-        num_scheduled_tokens: int,
-        num_scheduled_spec_tokens: int,
-        new_block_ids: list[int],
-        resumed_from_preemption: bool,
+            self,
+            request: Request,
+            num_scheduled_tokens: int,
+            num_scheduled_spec_tokens: int,
+            new_block_ids: list[int],
+            resumed_from_preemption: bool,
     ) -> CachedRequestData:
         # OPTIMIZATION: Cache the CachedRequestData objects to avoid creating
         # them at each scheduling step.
         num_computed_tokens = request.num_computed_tokens
         num_regular_tokens = num_scheduled_tokens - num_scheduled_spec_tokens
         new_token_ids = request.all_token_ids[
-            num_computed_tokens:num_computed_tokens + num_regular_tokens]
+                        num_computed_tokens:num_computed_tokens + num_regular_tokens]
 
         req_data_queue = self._cached_reqs_data.get(request.request_id)
         if req_data_queue:
@@ -553,11 +553,11 @@ class Scheduler(SchedulerInterface):
         return req_data
 
     def _try_schedule_encoder_inputs(
-        self,
-        request: Request,
-        num_computed_tokens: int,
-        num_new_tokens: int,
-        encoder_budget: int,
+            self,
+            request: Request,
+            num_computed_tokens: int,
+            num_new_tokens: int,
+            encoder_budget: int,
     ) -> tuple[list[int], int, int]:
         """
         Determine which encoder inputs need to be scheduled in the current step,
@@ -636,9 +636,9 @@ class Scheduler(SchedulerInterface):
         return encoder_inputs_to_schedule, num_new_tokens, encoder_budget
 
     def update_from_output(
-        self,
-        scheduler_output: SchedulerOutput,
-        model_runner_output: ModelRunnerOutput,
+            self,
+            scheduler_output: SchedulerOutput,
+            model_runner_output: ModelRunnerOutput,
     ) -> EngineCoreOutputs:
         sampled_token_ids = model_runner_output.sampled_token_ids
         spec_token_ids = model_runner_output.spec_token_ids
@@ -749,8 +749,9 @@ class Scheduler(SchedulerInterface):
                         new_logprobs=new_logprobs,
                         new_prompt_logprobs_tensors=prompt_logprobs_tensors,
                         stop_reason=request.stop_reason,
-                        events=request.take_events()),
+                        events=request.take_events(),
                         trace_headers=request.trace_headers
+                    ),
                 )
             else:
                 # Invariant: EngineCore returns no partial prefill outputs.
@@ -772,9 +773,9 @@ class Scheduler(SchedulerInterface):
             scheduler_stats=self.make_stats(spec_decoding_stats),
         )
         if self.include_finished_set:
-            #TODO currently sending duplicates here, improve this
+            # TODO currently sending duplicates here, improve this
             engine_core_outputs.finished_requests = (
-                scheduler_output.finished_req_ids | self.finished_req_ids)
+                    scheduler_output.finished_req_ids | self.finished_req_ids)
 
         return engine_core_outputs
 
@@ -785,9 +786,9 @@ class Scheduler(SchedulerInterface):
             request.record_event(EngineCoreEventType.QUEUED)
 
     def finish_requests(
-        self,
-        request_ids: Union[str, Iterable[str]],
-        finished_status: RequestStatus,
+            self,
+            request_ids: Union[str, Iterable[str]],
+            finished_status: RequestStatus,
     ) -> None:
         """Handles the finish signal from outside the scheduler.
 
@@ -796,7 +797,7 @@ class Scheduler(SchedulerInterface):
         """
         assert RequestStatus.is_finished(finished_status)
         if isinstance(request_ids, str):
-            request_ids = (request_ids, )
+            request_ids = (request_ids,)
         else:
             request_ids = set(request_ids)
 
@@ -832,8 +833,8 @@ class Scheduler(SchedulerInterface):
         return self.kv_cache_manager.reset_prefix_cache()
 
     def make_stats(
-        self,
-        spec_decoding_stats: Optional[SpecDecodingStats] = None,
+            self,
+            spec_decoding_stats: Optional[SpecDecodingStats] = None,
     ) -> Optional[SchedulerStats]:
         if not self.log_stats:
             return None
@@ -848,10 +849,10 @@ class Scheduler(SchedulerInterface):
         )
 
     def make_spec_decoding_stats(
-        self,
-        spec_decoding_stats: Optional[SpecDecodingStats],
-        num_draft_tokens: int,
-        num_accepted_tokens: int,
+            self,
+            spec_decoding_stats: Optional[SpecDecodingStats],
+            num_draft_tokens: int,
+            num_accepted_tokens: int,
     ) -> Optional[SpecDecodingStats]:
         if not self.log_stats:
             return None

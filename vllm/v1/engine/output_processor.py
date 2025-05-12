@@ -397,7 +397,7 @@ class OutputProcessor:
     def do_tracing(self, engine_core_output: EngineCoreOutput,
                    req_state: RequestState,
                    iteration_stats: Optional[IterationStats]):
-        if engine_core_output.finish_reason is None or iteration_stats is None:
+        if engine_core_output.finish_reason is None or iteration_stats is None or req_state is None or req_state.stats is None:
             return
         arrival_time_nano_seconds = int(req_state.stats.arrival_time * 1e9)
 
