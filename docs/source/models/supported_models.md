@@ -746,7 +746,7 @@ See [relevant issue on HF Transformers](https://github.com/huggingface/transform
 :::
 
 :::{note}
-`jinaai/jina-embeddings-v3` supports multiple tasks through lora, while vllm temporarily only supports text-matching tasks by merging lora weights.
+`jinaai/jina-embeddings-v3` supports multiple tasks through LoRA, while vLLM temporarily only supports text-matching tasks by merging LoRA weights.
 :::
 
 If your model is not in the above list, we will try to automatically convert the model using
