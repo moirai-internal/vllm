@@ -107,6 +107,7 @@ class EngineCoreOutput(
     finish_reason: Optional[FinishReason] = None
     stop_reason: Union[int, str, None] = None
     events: Optional[list[EngineCoreEvent]] = None
+    kv_transfer_params: Optional[dict[str, Any]] = None
 
     trace_headers: Optional[Mapping[str, str]] = None
 
