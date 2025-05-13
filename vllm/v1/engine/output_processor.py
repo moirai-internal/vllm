@@ -18,7 +18,7 @@ from vllm.v1.metrics.stats import (IterationStats, LoRARequestStates,
 from vllm.config import ObservabilityConfig
 from vllm.tracing import (SpanAttributes, SpanKind, extract_trace_context,
                           init_tracer)
-
+import time
 
 class RequestOutputCollector:
     """
@@ -397,12 +397,12 @@ class OutputProcessor:
     def do_tracing(self, engine_core_output: EngineCoreOutput,
                    req_state: RequestState,
                    iteration_stats: Optional[IterationStats]):
-        if engine_core_output.finish_reason is None or iteration_stats is None or req_state is None or req_state.stats is None:
+        if engine_core_output.finish_reason is None or iteration_stats is None or req_state is None or req_state.stats is None or self.tracer is None:
             return
         arrival_time_nano_seconds = int(req_state.stats.arrival_time * 1e9)
 
         trace_context = extract_trace_context(engine_core_output.trace_headers)
-        with tracer.start_as_current_span("llm_request",
+        with self.tracer.start_as_current_span("llm_request",
                                           kind=SpanKind.SERVER,
                                           context=trace_context,
                                           start_time=arrival_time_nano_seconds) as span:
