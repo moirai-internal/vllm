@@ -20,6 +20,7 @@ from vllm.tracing import (SpanAttributes, SpanKind, extract_trace_context,
                           init_tracer)
 import time
 
+
 class RequestOutputCollector:
     """
     Collects streamed RequestOutputs per individual request,
@@ -144,11 +145,11 @@ class RequestState:
         )
 
     def make_request_output(
-        self,
-        new_token_ids: list[int],
-        finish_reason: Optional[FinishReason],
-        stop_reason: Union[int, str, None],
-        kv_transfer_params: Optional[dict[str, Any]] = None,
+            self,
+            new_token_ids: list[int],
+            finish_reason: Optional[FinishReason],
+            stop_reason: Union[int, str, None],
+            kv_transfer_params: Optional[dict[str, Any]] = None,
     ) -> Optional[RequestOutput]:
 
         finished = finish_reason is not None
@@ -174,11 +175,11 @@ class RequestState:
                                         kv_transfer_params)
 
     def _new_request_output(
-        self,
-        request_id: str,
-        outputs: list[CompletionOutput],
-        finished: bool,
-        kv_transfer_params: Optional[dict[str, Any]] = None,
+            self,
+            request_id: str,
+            outputs: list[CompletionOutput],
+            finished: bool,
+            kv_transfer_params: Optional[dict[str, Any]] = None,
     ) -> RequestOutput:
 
         if self.output_kind == RequestOutputKind.DELTA:
@@ -244,7 +245,8 @@ class OutputProcessor:
         self.observability_config = observability_config
 
         self.tracer = None
-        if self.observability_config is not None and self.observability_config.otlp_traces_endpoint:
+        if (self.observability_config is not None
+                and self.observability_config.otlp_traces_endpoint):
             self.tracer = init_tracer(
                 "vllm.llm_engine",
                 self.observability_config.otlp_traces_endpoint)
@@ -409,9 +411,9 @@ class OutputProcessor:
 
         trace_context = extract_trace_context(engine_core_output.trace_headers)
         with self.tracer.start_as_current_span("llm_request",
-                                          kind=SpanKind.SERVER,
-                                          context=trace_context,
-                                          start_time=arrival_time_nano_seconds) as span:
+                                               kind=SpanKind.SERVER,
+                                               context=trace_context,
+                                               start_time=arrival_time_nano_seconds) as span:
             metrics = req_state.stats
             ttft = metrics.first_token_ts - metrics.arrival_time
             e2e_time = time.time() - metrics.arrival_time
@@ -447,8 +449,9 @@ class OutputProcessor:
                                e2e_time)
             span.set_attribute(SpanAttributes.GEN_AI_LATENCY_TIME_IN_QUEUE,
                                queued_time)
-            span.set_attribute(SpanAttributes.GEN_AI_LATENCY_TIME_IN_MODEL_PREFILL,
-                               prefill_time)
+            span.set_attribute(
+                SpanAttributes.GEN_AI_LATENCY_TIME_IN_MODEL_PREFILL,
+                prefill_time)
             span.set_attribute(SpanAttributes.GEN_AI_LATENCY_TIME_IN_MODEL_DECODE,
                                decode_time)
             span.set_attribute(SpanAttributes.GEN_AI_LATENCY_TIME_IN_MODEL_INFERENCE,
