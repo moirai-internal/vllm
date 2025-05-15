@@ -1662,6 +1662,15 @@ class LLMEngine:
         gpu_prefix_cache_hit_rate = self.scheduler[
             0].get_prefix_cache_hit_rate(Device.GPU)
 
+        # Multi-modal cache stats
+        mm_registry = self.input_preprocessor.mm_registry
+        processor_cache_stats = mm_registry.make_processor_cache_stats()
+        mm_cache_usage = processor_cache_stats.usage
+        mm_cache_size_G = processor_cache_stats.size_G
+        mm_cache_size_items = processor_cache_stats.size_items
+        mm_cache_queries = processor_cache_stats.queries
+        mm_cache_hits = processor_cache_stats.hits
+
         # Iteration stats
         num_prompt_tokens_iter = 0
         num_generation_tokens_iter = 0
@@ -1848,6 +1857,12 @@ class LLMEngine:
             #   Prefix Cache Hit Rate
             cpu_prefix_cache_hit_rate=cpu_prefix_cache_hit_rate,
             gpu_prefix_cache_hit_rate=gpu_prefix_cache_hit_rate,
+            #   Multi-modal cache stats
+            mm_cache_usage=mm_cache_usage,
+            mm_cache_size_G=mm_cache_size_G,
+            mm_cache_size_items=mm_cache_size_items,
+            mm_cache_queries=mm_cache_queries,
+            mm_cache_hits=mm_cache_hits,
 
             # Iteration stats
             num_prompt_tokens_iter=num_prompt_tokens_iter,
