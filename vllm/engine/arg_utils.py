@@ -8,7 +8,7 @@ import re
 import sys
 import threading
 import warnings
-from dataclasses import MISSING, dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass, asdict
 from itertools import permutations
 from typing import (Annotated, Any, Callable, Dict, List, Literal, Optional,
                     Type, TypeVar, Union, cast, get_args, get_origin)
@@ -960,6 +960,24 @@ class EngineArgs:
             self.speculative_config)
 
         return speculative_config
+
+    def create_structured_outputs_config(self,
+                                         backend: str,
+                                         disable_fallback: bool,
+                                         disable_any_whitespace: bool,
+                                         disable_additional_properties: bool,
+                                         reasoning_parser: str
+                                         ) -> StructuredOutputsConfig:
+        default_value = asdict(self.structured_outputs_config)
+        default_value.update({
+          "backend" : backend,
+          "disable_fallback" : disable_fallback,
+          "disable_any_whitespace" : disable_any_whitespace,
+          "disable_additional_properties" : disable_additional_properties,
+          "reasoning_backend" : reasoning_parser,
+          })
+        return StructuredOutputsConfig(**default_value)
+
 
     def create_engine_config(
         self,
