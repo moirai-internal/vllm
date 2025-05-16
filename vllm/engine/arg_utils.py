@@ -8,7 +8,7 @@ import re
 import sys
 import threading
 import warnings
-from dataclasses import MISSING, dataclass, fields, is_dataclass, asdict
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from itertools import permutations
 from typing import (Annotated, Any, Callable, Dict, List, Literal, Optional,
                     Type, TypeVar, Union, cast, get_args, get_origin)
@@ -961,23 +961,34 @@ class EngineArgs:
 
         return speculative_config
 
-    def create_structured_outputs_config(self,
-                                         backend: str,
-                                         disable_fallback: bool,
-                                         disable_any_whitespace: bool,
-                                         disable_additional_properties: bool,
-                                         reasoning_parser: str
-                                         ) -> StructuredOutputsConfig:
+    def create_structured_outputs_config(
+        self,
+        backend: str,
+        disable_fallback: bool,
+        disable_any_whitespace: bool,
+        disable_additional_properties: bool,
+        reasoning_parser: str,
+    ) -> StructuredOutputsConfig:
         default_value = asdict(self.structured_outputs_config)
-        default_value.update({
-          "backend" : backend,
-          "disable_fallback" : disable_fallback,
-          "disable_any_whitespace" : disable_any_whitespace,
-          "disable_additional_properties" : disable_additional_properties,
-          "reasoning_backend" : reasoning_parser,
-          })
-        return StructuredOutputsConfig(**default_value)
 
+        updates: dict[str, Any] = {}
+        if backend != default_value["backend"]:
+            updates["backend"] = backend
+        if disable_fallback != default_value["disable_fallback"]:
+            updates["disable_fallback"] = disable_fallback
+        if disable_any_whitespace != default_value["disable_any_whitespace"]:
+            updates["disable_any_whitespace"] = disable_any_whitespace
+        if disable_additional_properties != \
+                default_value["disable_additional_properties"]:
+            updates["disable_additional_properties"] = \
+                    disable_additional_properties
+        if reasoning_parser != default_value["reasoning_backend"]:
+            updates["reasoning_backend"] = reasoning_parser
+
+        if updates:
+            default_value.update(updates)
+
+        return StructuredOutputsConfig(**default_value)
 
     def create_engine_config(
         self,
@@ -1179,6 +1190,14 @@ class EngineArgs:
             otlp_traces_endpoint=self.otlp_traces_endpoint,
             collect_detailed_traces=self.collect_detailed_traces,
         )
+        structured_outputs_config = self.create_structured_outputs_config(
+            backend=self.guided_decoding_backend,
+            disable_fallback=self.guided_decoding_disable_fallback,
+            disable_any_whitespace=self.guided_decoding_disable_any_whitespace,
+            disable_additional_properties=self.
+            guided_decoding_disable_additional_properties,
+            reasoning_parser=self.reasoning_parser,
+        )
 
         config = VllmConfig(
             model_config=model_config,
@@ -1189,7 +1208,7 @@ class EngineArgs:
             lora_config=lora_config,
             speculative_config=speculative_config,
             load_config=load_config,
-            structured_outputs_config=self.structured_outputs_config,
+            structured_outputs_config=structured_outputs_config,
             observability_config=observability_config,
             prompt_adapter_config=prompt_adapter_config,
             compilation_config=self.compilation_config,
