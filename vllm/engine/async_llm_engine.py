@@ -512,8 +512,7 @@ class _AsyncLLMEngine(LLMEngine):
             params = await build_guided_decoding_logits_processor_async(
                 sampling_params=params,
                 tokenizer=await self.get_tokenizer_async(lora_request),
-                default_guided_backend=self.structured_outputs_config.
-                guided_decoding_backend,
+                default_guided_backend=self.structured_outputs_config.backend,
                 reasoning_backend=self.structured_outputs_config.
                 reasoning_backend,
                 model_config=self.model_config)
