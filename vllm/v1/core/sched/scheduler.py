@@ -134,9 +134,9 @@ class Scheduler(SchedulerInterface):
                 self.use_eagle = True
                 self.num_lookahead_tokens = self.num_spec_tokens
 
-        self.enable_cpu_offloading = self.cache_config.enable_cpu_offloading
+        self.enable_kvcache_cpu_offloading = self.cache_config.enable_kvcache_cpu_offloading
         # Create the KV cache manager.
-        if self.enable_cpu_offloading:
+        if self.enable_kvcache_cpu_offloading:
             self.kv_cache_manager = CpuOffloadingKVCacheManager(
                 kv_cache_config=kv_cache_config,
                 max_model_len=self.max_model_len,
@@ -195,7 +195,7 @@ class Scheduler(SchedulerInterface):
         # For logging.
         scheduled_timestamp = time.monotonic()
 
-        if self.enable_cpu_offloading:
+        if self.enable_kvcache_cpu_offloading:
             # For cpu offloading, when the block is full, it triggers a swap out,
             # but we must submit it to the worker in the next step
             # get the swap out map result in the last step
@@ -503,7 +503,7 @@ class Scheduler(SchedulerInterface):
             ) for req in scheduled_running_reqs
         ]
 
-        if self.enable_cpu_offloading:
+        if self.enable_kvcache_cpu_offloading:
             # For cpu offloading, when gpu block misses and cpu hits,
             # it triggers a swap in, we must submit it to the worker
             # in the current step
@@ -880,13 +880,13 @@ class Scheduler(SchedulerInterface):
         assert prefix_cache_stats is not None
 
         cpu_cache_usage = self.kv_cache_manager.cpu_usage \
-            if self.enable_cpu_offloading else None
+            if self.enable_kvcache_cpu_offloading else None
         cpu_prefix_cache_stats = self.kv_cache_manager.make_cpu_prefix_cache_stats() \
-            if self.enable_cpu_offloading else None
+            if self.enable_kvcache_cpu_offloading else None
         swap_out_count = self.kv_cache_manager.get_swap_out_count() \
-            if self.enable_cpu_offloading else None
+            if self.enable_kvcache_cpu_offloading else None
         swap_in_count = self.kv_cache_manager.get_swap_in_count() \
-            if self.enable_cpu_offloading else None
+            if self.enable_kvcache_cpu_offloading else None
 
         return SchedulerStats(
             num_running_reqs=len(self.running),

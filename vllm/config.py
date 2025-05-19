@@ -1392,7 +1392,7 @@ class CacheConfig:
     """The number of blocks to allocate for CPU memory."""
 
     # enable cpu offloading in V1
-    enable_cpu_offloading: bool = False
+    enable_kvcache_cpu_offloading: bool = False
     offloading_blocks_threshold: int = 1
 
     def compute_hash(self) -> str:

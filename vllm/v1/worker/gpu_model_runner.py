@@ -1851,7 +1851,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                                               dtype=torch.int64).view(-1, 2)
             swap_out_cnt = blocks_to_swap_out.size(0)
             # The buffer will be allocated only if the cache engines are initialized
-            if hasattr(self, "blocks_to_swap_in_buffer"):
+            if hasattr(self, "blocks_to_swap_out_buffer"):
                 self.blocks_to_swap_out_buffer[:swap_out_cnt] = blocks_to_swap_out
                 blocks_to_swap_out = self.blocks_to_swap_out_buffer[:swap_out_cnt]
 
