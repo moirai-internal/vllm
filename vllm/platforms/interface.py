@@ -158,6 +158,7 @@ class Platform:
 
     def maybe_update_max_tokens(self, prompt_len: int,
                                 default_max_tokens: int) -> int:
+        # Used for hardware platforms that only allow certain shapes.
         return default_max_tokens
 
     def is_cuda_alike(self) -> bool:
