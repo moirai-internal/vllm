@@ -556,4 +556,6 @@ def report_usage_stats(
             vllm_config.model_config.enforce_eager,
             "disable_custom_all_reduce":
             vllm_config.parallel_config.disable_custom_all_reduce,
+            "disable_quick_all_reduce":
+            vllm_config.parallel_config.disable_quick_all_reduce,
         })

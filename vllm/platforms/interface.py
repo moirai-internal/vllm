@@ -457,6 +457,13 @@ class Platform:
         return False
 
     @classmethod
+    def use_quick_allreduce(cls) -> bool:
+        """
+        Returns if quick allreduce is supported on the current platform
+        """
+        return False
+
+    @classmethod
     def validate_request(
         cls,
         prompt: PromptType,
