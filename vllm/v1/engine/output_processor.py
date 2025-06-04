@@ -110,7 +110,6 @@ class RequestState:
         cls,
         tokenizer: AnyTokenizer,
         request: EngineCoreRequest,
-        prompt: Optional[str],
         parent_req: Optional[ParentRequest],
         request_index: int,
         queue: Optional[RequestOutputCollector],
@@ -118,6 +117,20 @@ class RequestState:
     ) -> "RequestState":
         if not request.sampling_params.detokenize:
             tokenizer = None
+
+        detokenizer = IncrementalDetokenizer.from_new_request(
+            tokenizer=tokenizer,
+            request=request,
+        )
+
+        # When generating the requestState, the prompt_text must
+        # be preserved because this value needs to be written
+        # back to RequestOutputs upon returning. Here, we decode
+        # the prompt_token_ids of the request into prompt_text.
+        prompt_text = ""
+        for token_id in request.prompt_token_ids:
+            prompt_text += detokenizer.decode_next(token_id)
+
         return cls(
             request_id=request.request_id,
             parent_req=parent_req,
@@ -125,16 +138,13 @@ class RequestState:
             lora_name=(request.lora_request.name
                        if request.lora_request is not None else None),
             output_kind=request.sampling_params.output_kind,
-            prompt=prompt,
+            prompt=prompt_text,
             prompt_token_ids=request.prompt_token_ids,
             logprobs_processor=LogprobsProcessor.from_new_request(
                 tokenizer=tokenizer,
                 request=request,
             ),
-            detokenizer=IncrementalDetokenizer.from_new_request(
-                tokenizer=tokenizer,
-                request=request,
-            ),
+            detokenizer=detokenizer,
             max_tokens_param=(request.sampling_params.max_tokens if
                               request.sampling_params is not None else None),
             arrival_time=request.arrival_time,
@@ -276,7 +286,6 @@ class OutputProcessor:
     def add_request(
         self,
         request: EngineCoreRequest,
-        prompt: Optional[str],
         parent_req: Optional[ParentRequest] = None,
         request_index: int = 0,
         queue: Optional[RequestOutputCollector] = None,
@@ -288,7 +297,6 @@ class OutputProcessor:
         req_state = RequestState.from_new_request(
             tokenizer=self.tokenizer.get_lora_tokenizer(request.lora_request),
             request=request,
-            prompt=prompt,
             parent_req=parent_req,
             request_index=request_index,
             queue=queue,
