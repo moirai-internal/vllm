@@ -3,8 +3,8 @@
 
 import enum
 import time
-from collections.abc import Sequence
-from typing import Any, Optional, Union, Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any, Optional, Union
 
 import msgspec
 
@@ -40,10 +40,10 @@ class FinishReason(enum.IntEnum):
 
 
 class EngineCoreRequest(
-    msgspec.Struct,
-    array_like=True,  # type: ignore[call-arg]
-    omit_defaults=True,  # type: ignore[call-arg]
-    gc=False):  # type: ignore[call-arg]
+        msgspec.Struct,
+        array_like=True,  # type: ignore[call-arg]
+        omit_defaults=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
 
     request_id: str
     prompt_token_ids: list[int]
@@ -95,10 +95,10 @@ class EngineCoreEvent(msgspec.Struct):
 
 
 class EngineCoreOutput(
-    msgspec.Struct,
-    array_like=True,  # type: ignore[call-arg]
-    omit_defaults=True,  # type: ignore[call-arg]
-    gc=False):  # type: ignore[call-arg]
+        msgspec.Struct,
+        array_like=True,  # type: ignore[call-arg]
+        omit_defaults=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
 
     request_id: str
     new_token_ids: list[int]
@@ -110,7 +110,7 @@ class EngineCoreOutput(
     stop_reason: Union[int, str, None] = None
     events: Optional[list[EngineCoreEvent]] = None
     kv_transfer_params: Optional[dict[str, Any]] = None
-      
+
     trace_headers: Optional[Mapping[str, str]] = None
     # The number of tokens with prefix cache hits.
     num_cached_tokens: int = 0
@@ -121,9 +121,9 @@ class EngineCoreOutput(
 
 
 class UtilityOutput(
-    msgspec.Struct,
-    array_like=True,  # type: ignore[call-arg]
-    gc=False):  # type: ignore[call-arg]
+        msgspec.Struct,
+        array_like=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
 
     call_id: int
 
@@ -133,10 +133,10 @@ class UtilityOutput(
 
 
 class EngineCoreOutputs(
-    msgspec.Struct,
-    array_like=True,  # type: ignore[call-arg]
-    omit_defaults=True,  # type: ignore[call-arg]
-    gc=False):  # type: ignore[call-arg]
+        msgspec.Struct,
+        array_like=True,  # type: ignore[call-arg]
+        omit_defaults=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
 
     # NOTE(Nick): We could consider ways to make this more compact,
     # e.g. columnwise layout

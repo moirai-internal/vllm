@@ -38,13 +38,13 @@ logger = init_logger(__name__)
 class Scheduler(SchedulerInterface):
 
     def __init__(
-            self,
-            vllm_config: VllmConfig,
-            kv_cache_config: KVCacheConfig,
-            structured_output_manager: StructuredOutputManager,
-            mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
-            include_finished_set: bool = False,
-            log_stats: bool = False,
+        self,
+        vllm_config: VllmConfig,
+        kv_cache_config: KVCacheConfig,
+        structured_output_manager: StructuredOutputManager,
+        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
+        include_finished_set: bool = False,
+        log_stats: bool = False,
     ) -> None:
         self.vllm_config = vllm_config
         self.scheduler_config = vllm_config.scheduler_config
@@ -68,8 +68,8 @@ class Scheduler(SchedulerInterface):
             self.scheduler_config.max_num_batched_tokens
         self.max_model_len = self.scheduler_config.max_model_len
         self.enable_kv_cache_events = (
-                self.kv_events_config is not None
-                and self.kv_events_config.enable_kv_cache_events)
+            self.kv_events_config is not None
+            and self.kv_events_config.enable_kv_cache_events)
 
         # Create KVConnector for the Scheduler. Note that each Worker
         # will have a corresponding KVConnector with Role=WORKER.
@@ -214,8 +214,8 @@ class Scheduler(SchedulerInterface):
             if request.has_encoder_inputs:
                 (encoder_inputs_to_schedule, num_new_tokens,
                  new_encoder_budget) = self._try_schedule_encoder_inputs(
-                    request, request.num_computed_tokens, num_new_tokens,
-                    encoder_budget)
+                     request, request.num_computed_tokens, num_new_tokens,
+                     encoder_budget)
 
             if num_new_tokens == 0:
                 # The request cannot be scheduled because one of the following
@@ -592,7 +592,7 @@ class Scheduler(SchedulerInterface):
         num_computed_tokens = request.num_computed_tokens
         num_regular_tokens = num_scheduled_tokens - num_scheduled_spec_tokens
         new_token_ids = request.all_token_ids[
-                        num_computed_tokens:num_computed_tokens + num_regular_tokens]
+            num_computed_tokens:num_computed_tokens + num_regular_tokens]
 
         req_data_queue = self._cached_reqs_data.get(request.request_id)
         if req_data_queue:
@@ -611,11 +611,11 @@ class Scheduler(SchedulerInterface):
         return req_data
 
     def _try_schedule_encoder_inputs(
-            self,
-            request: Request,
-            num_computed_tokens: int,
-            num_new_tokens: int,
-            encoder_budget: int,
+        self,
+        request: Request,
+        num_computed_tokens: int,
+        num_new_tokens: int,
+        encoder_budget: int,
     ) -> tuple[list[int], int, int]:
         """
         Determine which encoder inputs need to be scheduled in the current step,
@@ -810,7 +810,7 @@ class Scheduler(SchedulerInterface):
                         new_prompt_logprobs_tensors=prompt_logprobs_tensors,
                         stop_reason=request.stop_reason,
                         events=request.take_events(),
-                        kv_transfer_params = kv_transfer_params,
+                        kv_transfer_params=kv_transfer_params,
                         trace_headers=request.trace_headers,
                         num_cached_tokens=request.num_cached_tokens,
                     ))
@@ -871,9 +871,9 @@ class Scheduler(SchedulerInterface):
             request.record_event(EngineCoreEventType.QUEUED)
 
     def finish_requests(
-            self,
-            request_ids: Union[str, Iterable[str]],
-            finished_status: RequestStatus,
+        self,
+        request_ids: Union[str, Iterable[str]],
+        finished_status: RequestStatus,
     ) -> None:
         """Handles the finish signal from outside the scheduler.
 
@@ -882,7 +882,7 @@ class Scheduler(SchedulerInterface):
         """
         assert RequestStatus.is_finished(finished_status)
         if isinstance(request_ids, str):
-            request_ids = (request_ids,)
+            request_ids = (request_ids, )
         else:
             request_ids = set(request_ids)
 
@@ -933,8 +933,8 @@ class Scheduler(SchedulerInterface):
         return self.kv_cache_manager.reset_prefix_cache()
 
     def make_stats(
-            self,
-            spec_decoding_stats: Optional[SpecDecodingStats] = None,
+        self,
+        spec_decoding_stats: Optional[SpecDecodingStats] = None,
     ) -> Optional[SchedulerStats]:
         if not self.log_stats:
             return None
@@ -949,10 +949,10 @@ class Scheduler(SchedulerInterface):
         )
 
     def make_spec_decoding_stats(
-            self,
-            spec_decoding_stats: Optional[SpecDecodingStats],
-            num_draft_tokens: int,
-            num_accepted_tokens: int,
+        self,
+        spec_decoding_stats: Optional[SpecDecodingStats],
+        num_draft_tokens: int,
+        num_accepted_tokens: int,
     ) -> Optional[SpecDecodingStats]:
         if not self.log_stats:
             return None
