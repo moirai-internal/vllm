@@ -1,20 +1,11 @@
 # This local pyproject file is part of the migration from yapf to ruff format.
 # It uses the same core rules as the main pyproject.toml file, but with the
 # following differences:
-# - isort profile is set to black
 # - ruff line length is overridden to 88
 # - deprecated typing ignores (UP006, UP035) have been removed
 
-[tool.isort]
-profile = "black"
-
 [tool.ruff]
 line-length = 88
-exclude = [
-    # External file, leaving license intact
-    "examples/other/fp8/quantizer/quantize.py",
-    "vllm/vllm_flash_attn/flash_attn_interface.pyi"
-]
 
 [tool.ruff.lint.per-file-ignores]
 "vllm/third_party/**" = ["ALL"]

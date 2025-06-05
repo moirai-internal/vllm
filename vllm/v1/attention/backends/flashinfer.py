@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Attention layer with FlashInfer."""
 from __future__ import annotations
 
@@ -14,8 +15,7 @@ import vllm.envs as envs
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionType)
 from vllm.attention.layer import Attention
-from vllm.config import (VllmConfig, get_current_vllm_config,
-                         get_layers_from_vllm_config)
+from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.logger import init_logger
 from vllm.v1.attention.backends.flash_attn import use_cascade_attention
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
@@ -215,7 +215,7 @@ class FlashInferMetadataBuilder:
         # Global hyperparameters shared by all attention layers
         self.global_hyperparameters: Optional[PerLayerParameters] = None
 
-        self.vllm_config = get_current_vllm_config()
+        self.vllm_config = runner.vllm_config
         self.kv_cache_spec = kv_cache_spec
         self.block_table = block_table
 
@@ -507,6 +507,7 @@ class FlashInferImpl(AttentionImpl):
         blocksparse_params: Optional[dict[str, Any]] = None,
         logits_soft_cap: Optional[float] = None,
         attn_type: AttentionType = AttentionType.DECODER,
+        kv_sharing_target_layer_name: Optional[int] = None,
     ) -> None:
         self.num_heads = num_heads
         self.head_size = head_size
@@ -521,6 +522,7 @@ class FlashInferImpl(AttentionImpl):
             self.sliding_window = (sliding_window - 1, 0)
         self.kv_cache_dtype = kv_cache_dtype
         self.logits_soft_cap = logits_soft_cap
+        self.kv_sharing_target_layer_name = kv_sharing_target_layer_name
 
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
@@ -568,21 +570,25 @@ class FlashInferImpl(AttentionImpl):
         # performance to make sure it does not introduce any overhead.
 
         num_actual_tokens = attn_metadata.num_actual_tokens
-        # Reshape the input keys and values and store them in the cache.
-        # NOTE(woosuk): Here, key and value are padded while slot_mapping is
-        # not padded. However, we don't need to do key[:num_actual_tokens] and
-        # value[:num_actual_tokens] because the reshape_and_cache_flash op uses
-        # the slot_mapping's shape to determine the number of actual tokens.
-        torch.ops._C_cache_ops.reshape_and_cache_flash(
-            key,
-            value,
-            kv_cache[:, 0],
-            kv_cache[:, 1],
-            attn_metadata.slot_mapping,
-            self.kv_cache_dtype,
-            layer._k_scale,
-            layer._v_scale,
-        )
+
+        if self.kv_sharing_target_layer_name is None:
+            # Reshape the input keys and values and store them in the cache.
+            # Skip this if sharing KV cache with an earlier attention layer.
+            # NOTE(woosuk): Here, key and value are padded while slot_mapping is
+            # not padded. However, we don't need to do key[:num_actual_tokens]
+            # and value[:num_actual_tokens] because the reshape_and_cache_flash
+            # op uses the slot_mapping's shape to determine the number of
+            # actual tokens.
+            torch.ops._C_cache_ops.reshape_and_cache_flash(
+                key,
+                value,
+                kv_cache[:, 0],
+                kv_cache[:, 1],
+                attn_metadata.slot_mapping,
+                self.kv_cache_dtype,
+                layer._k_scale,
+                layer._v_scale,
+            )
 
         window_left = (self.sliding_window[0]
                        if self.sliding_window is not None else -1)

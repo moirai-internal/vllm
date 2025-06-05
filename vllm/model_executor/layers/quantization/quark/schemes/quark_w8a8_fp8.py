@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import torch
 from torch.nn import Parameter
@@ -88,7 +89,7 @@ class QuarkW8A8Fp8(QuarkScheme):
             layer.input_scale = None
 
     def create_weights(self, layer: torch.nn.Module,
-                       output_partition_sizes: List[int],
+                       output_partition_sizes: list[int],
                        input_size_per_partition: int,
                        params_dtype: torch.dtype, weight_loader: Callable,
                        **kwargs):
