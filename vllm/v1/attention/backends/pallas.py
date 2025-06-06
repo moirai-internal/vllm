@@ -195,7 +195,10 @@ class PallasAttentionBackendImpl(AttentionImpl):
             write_to_kv_cache(key, value, kv_cache, slot_mapping,
                               self.kv_cache_quantized_dtype,
                               layer._k_scale_float, layer._v_scale_float)
-
+        if self.kv_cache_quantized_dtype is not None and (
+                layer._k_scale_float == 0.0 or layer._v_scale_float == 0.0):
+            raise ValueError(
+                "k_scale_float and v_scale_float must be non-zero")
         output = torch.ops.xla.ragged_paged_attention(
             query,
             kv_cache,
