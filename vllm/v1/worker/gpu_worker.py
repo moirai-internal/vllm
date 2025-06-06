@@ -131,13 +131,14 @@ class Worker(WorkerBase):
             gc.collect()
             torch.cuda.empty_cache()
             self.init_gpu_memory = torch.cuda.mem_get_info()[0]
+            backend = current_platform.dist_backend
         else:
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
         # Initialize the distributed environment.
         init_worker_distributed_environment(self.vllm_config, self.rank,
                                             self.distributed_init_method,
-                                            self.local_rank)
+                                            self.local_rank, backend)
         # Set random seed.
         set_random_seed(self.model_config.seed)
 
