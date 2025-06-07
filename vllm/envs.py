@@ -123,6 +123,8 @@ if TYPE_CHECKING:
     VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE: int = 163840
     VLLM_TOOL_PARSE_REGEX_TIMEOUT_SECONDS: int = 1
     VLLM_SLEEP_WHEN_IDLE: bool = False
+    VLLM_SHARED_EXPERT_FUSION_REPLICAS: int = 0
+
 
 
 def get_default_cache_root():
@@ -847,6 +849,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # latency penalty when a request eventually comes.
     "VLLM_SLEEP_WHEN_IDLE":
     lambda: bool(int(os.getenv("VLLM_SLEEP_WHEN_IDLE", "0"))),
+
+    # Enable Share Expert Fusion by setting this > 0, disable by setting = 0
+    # The value here will be the Shared Expert relicas copied into MoE
+    # Set a larger value will consume more GPU memory
+    # but a better loading-balance thus potentially faster inference
+    "VLLM_SHARED_EXPERT_FUSION_REPLICAS":
+    lambda: int(os.environ["VLLM_SHARED_EXPERT_FUSION_REPLICAS"])
+    if "VLLM_SHARED_EXPERT_FUSION_REPLICAS" in os.environ else 0
 }
 
 # --8<-- [end:env-vars-definition]
