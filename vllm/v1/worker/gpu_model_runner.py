@@ -251,21 +251,29 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                                          device="cpu",
                                          pin_memory=self.pin_memory)
         self.input_ids_np = self.input_ids_cpu.numpy()
-        self.positions_cpu = torch.zeros(self.max_num_tokens,
+        self.logical_positions_cpu = torch.zeros(self.max_num_tokens,
                                          dtype=torch.int64,
                                          device="cpu",
                                          pin_memory=self.pin_memory)
-        self.positions_np = self.positions_cpu.numpy()
-        self.compressed_positions_cpu = torch.zeros(self.max_num_tokens,
+        self.logical_positions_np = self.logical_positions_cpu.numpy()
+        self.physical_positions_cpu = torch.zeros(self.max_num_tokens,
                                          dtype=torch.int64,
                                          device="cpu",
                                          pin_memory=self.pin_memory)
-        self.compressed_positions_np = self.compressed_positions_cpu.numpy()
+        self.physical_positions_np = self.physical_positions_cpu.numpy()
         self.slot_mapping_cpu = torch.zeros(self.max_num_tokens,
                                             dtype=torch.int32,
                                             device="cpu",
                                             pin_memory=self.pin_memory)
         self.slot_mapping_np = self.slot_mapping_cpu.numpy()
+        self.occupied_slot_mapping_cpu = torch.zeros(
+                                            max(self.max_num_reqs + 1,
+                                                self.max_model_len,
+                                                self.max_num_tokens),
+                                            dtype=torch.int32,
+                                            device="cpu",
+                                            pin_memory=self.pin_memory)
+        self.occupied_slot_mapping_np = self.occupied_slot_mapping_cpu.numpy()
         self.query_start_loc_cpu = torch.zeros(self.max_num_reqs + 1,
                                                dtype=torch.int32,
                                                device="cpu",
@@ -498,10 +506,18 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         num_scheduled_tokens = np.array(tokens, dtype=np.int32)
         max_num_scheduled_tokens = max(tokens)
 
+        num_kv_cache_tokens = (
+            self.input_batch.num_computed_tokens_cpu
+            - self.input_batch.num_dropped_tokens_list_cpu
+        )[:num_reqs]
+        total_num_kv_cache_tokens = num_kv_cache_tokens.sum()
+
         # Get request indices.
         # E.g., [2, 5, 3] -> [0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
         req_indices = np.repeat(self.arange_np[:num_reqs],
                                 num_scheduled_tokens)
+        occupied_indices = np.repeat(self.arange_np[:num_reqs],
+                                num_kv_cache_tokens)
 
         # Get batched arange.
         # E.g., [2, 5, 3] -> [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
@@ -509,23 +525,25 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # np.concatenate([np.arange(n) for n in num_scheduled_tokens])
         # Step 1. [2, 5, 3] -> [2, 7, 10]
         cu_num_tokens = np.cumsum(num_scheduled_tokens)
+        occupied_cu_num_tokens = np.cumsum(num_kv_cache_tokens)
         # Step 2. [2, 7, 10] -> [0, 0, 2, 2, 2, 2, 2, 7, 7, 7]
         cumsums_offsets = np.repeat(cu_num_tokens - num_scheduled_tokens,
                                     num_scheduled_tokens)
+        occupied_cumsums_offsets = np.repeat(occupied_cu_num_tokens - num_kv_cache_tokens,
+                                    num_kv_cache_tokens)
         # Step 3. [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
         arange = self.arange_np[:total_num_scheduled_tokens] - cumsums_offsets
+        occupied_positions_np = self.arange_np[:total_num_kv_cache_tokens] - occupied_cumsums_offsets
 
-        # Get positions.
-        positions_np = self.positions_np[:total_num_scheduled_tokens]
+        # Get request positions.
+        logical_positions_np = self.logical_positions_np[:total_num_scheduled_tokens]
         np.add(self.input_batch.num_computed_tokens_cpu[req_indices],
                arange,
-               out=positions_np)
-        compressed_positions_np = self.compressed_positions_np[:total_num_scheduled_tokens]
-        num_kv_cache_tokens = self.input_batch.num_computed_tokens_cpu - \
-            self.input_batch.num_dropped_tokens_list_cpu
+               out=logical_positions_np)
+        physical_positions_np = self.physical_positions_np[:total_num_scheduled_tokens]
         np.add(num_kv_cache_tokens[req_indices],
                arange,
-               out=compressed_positions_np)
+               out=physical_positions_np)
 
         # Calculate M-RoPE positions.
         # Only relevant for models using M-RoPE (e.g, Qwen2-VL)
@@ -536,7 +554,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # E.g., [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
         # -> [0, 1, M, M + 1, M + 2, M + 3, M + 4, 2 * M, 2 * M + 1, 2 * M + 2]
         # where M is the max_model_len.
-        token_indices = (positions_np +
+        token_indices = (logical_positions_np +
                          req_indices * self.input_batch.token_ids_cpu.shape[1])
 
         # NOTE(woosuk): We use torch.index_select instead of np.take here
@@ -553,24 +571,31 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # where K is the max_num_blocks_per_req and the block size is 2.
         # NOTE(woosuk): We can't simply use `token_indices // block_size` here
         # because M (max_model_len) is not necessarily divisible by block_size.
-        block_table_indices = (req_indices * self.max_num_blocks_per_req +
-                               compressed_positions_np // self.block_size)
+        block_table_req_indices = (req_indices * self.max_num_blocks_per_req +
+                               physical_positions_np // self.block_size)
+        block_table_occupied_indices = (occupied_indices * self.max_num_blocks_per_req +
+                               occupied_positions_np // self.block_size)
         # NOTE(woosuk): We use torch.index_select instead of np.take here
         # because torch.index_select is much faster than np.take for large
         # tensors.
         block_table_cpu = self.input_batch.block_table.get_cpu_tensor()
-        block_numbers = block_table_cpu.flatten()[block_table_indices].numpy()
-        block_offsets = compressed_positions_np % self.block_size
+        block_numbers = block_table_cpu.flatten()[block_table_req_indices].numpy()
+        occupied_block_numbers = block_table_cpu.flatten()[block_table_occupied_indices].numpy()
+        block_offsets = physical_positions_np % self.block_size
+        occupied_block_offsets = occupied_positions_np % self.block_size
         np.add(block_numbers * self.block_size,
                block_offsets,
                out=self.slot_mapping_np[:total_num_scheduled_tokens])
+        np.add(occupied_block_numbers * self.block_size,
+               occupied_block_offsets,
+               out=self.occupied_slot_mapping_np[:total_num_kv_cache_tokens])
 
         # Prepare the attention metadata.
         self.query_start_loc_np[0] = 0
         self.query_start_loc_np[1:num_reqs + 1] = cu_num_tokens
 
         self.seq_lens_np[:num_reqs] = (
-            self.input_batch.num_computed_tokens_cpu[:num_reqs] +
+            num_kv_cache_tokens +
             num_scheduled_tokens)
 
         # Copy the tensors to the GPU.
@@ -584,7 +609,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         else:
             # Common case (1D positions)
             self.positions[:total_num_scheduled_tokens].copy_(
-                self.positions_cpu[:total_num_scheduled_tokens],
+                self.logical_positions_cpu[:total_num_scheduled_tokens],
                 non_blocking=True)
 
         # Prepare for cascade attention if enabled & beneficial.
@@ -602,6 +627,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             max_query_len=max_num_scheduled_tokens,
             common_prefix_len=common_prefix_len,
             should_compress_list=should_compress_list,
+            total_num_kv_cache_tokens=total_num_kv_cache_tokens,
         )
 
         use_spec_decode = len(
