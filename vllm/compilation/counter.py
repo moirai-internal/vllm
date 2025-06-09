@@ -20,6 +20,8 @@ class CompilationCounter:
     num_inductor_compiles: int = 0
     # EagerAdapter.compile calls
     num_eager_compiles: int = 0
+    # Number of times a model was loaded with CompilationLevel.DYNAMO_AS_IS
+    dynamo_as_is_count: int = 0
 
     def clone(self) -> "CompilationCounter":
         return copy.deepcopy(self)

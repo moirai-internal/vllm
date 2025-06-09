@@ -19,6 +19,7 @@ from vllm.attention.backends.abstract import (AttentionBackend,
                                               AttentionMetadataBuilder)
 from vllm.attention.layer import Attention
 from vllm.attention.utils.fa_utils import get_flash_attn_version
+from vllm.compilation.counter import compilation_counter
 from vllm.config import (CompilationLevel, VllmConfig,
                          get_layers_from_vllm_config)
 from vllm.distributed.kv_transfer import (get_kv_transfer_group,
@@ -39,7 +40,8 @@ from vllm.sampling_params import SamplingType
 from vllm.sequence import IntermediateTensors
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, DeviceMemoryProfiler,
                         GiB_bytes, LazyLoader, async_tensor_h2d, cdiv,
-                        check_use_alibi, is_pin_memory_available)
+                        check_use_alibi, is_pin_memory_available,
+                        supports_dynamo)
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
 from vllm.v1.kv_cache_interface import (AttentionSpec, FullAttentionSpec,
@@ -1624,6 +1626,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     self.model_memory_usage / GiB_bytes,
                     time_after_load - time_before_load)
         prepare_communication_buffer_for_model(self.model)
+
+        if (
+            self.vllm_config.compilation_config.level == \
+                CompilationLevel.DYNAMO_AS_IS and supports_dynamo()
+        ):
+            backend = self.vllm_config.compilation_config.init_backend(
+                self.vllm_config)
+            compilation_counter.dynamo_as_is_count += 1
+            self.model.compile(
+                fullgraph=envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
+                backend=backend)
 
     def save_tensorized_model(
         self,
