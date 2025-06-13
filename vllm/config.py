@@ -3880,7 +3880,9 @@ class CompilationConfig:
         certain small batchsizes, where inductor is good at optimizing.
     """
     # Top-level Compilation control
-    level: int = 0
+    level: int = field(
+        default_factory=lambda: (CompilationLevel.PIECEWISE if envs.VLLM_USE_V1
+                                 else CompilationLevel.NO_COMPILATION))
     """The level of compilation:
 
     - 0: no compilation.
@@ -4416,6 +4418,8 @@ class VllmConfig:
             self.model_config.verify_with_parallel_config(self.parallel_config)
             self.model_config.verify_dual_chunk_attention_config(
                 self.load_config)
+            if self.model_config.enforce_eager:
+                self.compilation_config.level = CompilationLevel.NO_COMPILATION
 
         self.cache_config.verify_with_parallel_config(self.parallel_config)
 
@@ -4456,7 +4460,6 @@ class VllmConfig:
             self.compilation_config.cudagraph_num_of_warmups = 1
             self.compilation_config.pass_config.enable_fusion = False
             self.compilation_config.pass_config.enable_noop = False
-            self.compilation_config.level = CompilationLevel.PIECEWISE
             self.compilation_config.set_splitting_ops_for_v1()
 
         self._set_cudagraph_sizes()
