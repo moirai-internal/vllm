@@ -3,7 +3,7 @@
 
 import functools
 import importlib.util
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -471,6 +471,9 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             block_shape=self.quant_config.weight_block_size,
             allow_deep_gemm=self.allow_deep_gemm)
 
+        self.use_pplx_kernels = False
+        self.rocm_aiter_moe_enabled = False
+
     def create_weights(self, layer: Module, num_experts: int, hidden_size: int,
                        intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
@@ -780,33 +783,38 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         assert not self.use_marlin and not self.rocm_aiter_moe_enabled, (
             "Marlin and ROCm AITER are not supported with all2all yet.")
 
-        experts: Optional[Union[BatchedTritonOrDeepGemmExperts,
-                                TritonOrDeepGemmExperts]] = None
         max_num_tokens_per_rank = prepare_finalize.max_num_tokens_per_rank()
         use_batched_experts = max_num_tokens_per_rank is not None
 
+        assert use_batched_experts
+
         if use_batched_experts:
-            experts = BatchedTritonOrDeepGemmExperts(
-                max_num_tokens=max_num_tokens_per_rank,
-                world_size=prepare_finalize.world_size,
-                dp_size=prepare_finalize.dp_size,
+            logger.debug(
+                "BatchedTritonOrDeepGemmExperts(%s): "
+                "max_tokens_per_rank=%s, block_size=%s, per_act_token=%s",
+                self.__class__.__name__, max_num_tokens_per_rank,
+                self.quant_config.weight_block_size, False)
+            return BatchedTritonOrDeepGemmExperts(
+                max_num_tokens=
+                max_num_tokens_per_rank,  # get from prepare_finalize?
+                world_size=prepare_finalize.world_size,  #  TODOsketchy
+                dp_size=prepare_finalize.dp_size,  # TODO sketchy
                 use_fp8_w8a8=True,
-                use_int8_w8a8=False,
-                use_int8_w8a16=False,
-                use_int4_w4a16=False,
-                per_channel_quant=False,
                 block_shape=self.quant_config.weight_block_size,
+                per_act_token_quant=False,  #?
                 allow_deep_gemm=self.allow_deep_gemm,
             )
         else:
-            experts = TritonOrDeepGemmExperts(
+            logger.debug(
+                "TritonOrDeepGemmExperts(%s): block_size=%s, per_act_token=%s",
+                self.__class__.__name__, self.quant_config.weight_block_size,
+                False)
+            return TritonOrDeepGemmExperts(
                 use_fp8_w8a8=True,
                 block_shape=self.quant_config.weight_block_size,
+                per_act_token=False,  #?
                 allow_deep_gemm=self.allow_deep_gemm,
             )
-
-        assert experts is not None
-        return experts
 
     def apply(
         self,
@@ -826,7 +834,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         apply_router_weight_on_input: bool = False,
         activation: str = "silu",
     ) -> torch.Tensor:
-
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,

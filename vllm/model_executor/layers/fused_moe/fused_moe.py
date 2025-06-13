@@ -12,6 +12,8 @@ import vllm.envs as envs
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm import _custom_ops as ops
 from vllm.logger import init_logger
+from vllm.model_executor.layers.fused_moe.config import (
+    FusedMoEQuantConfig, get_config_quant_dtype)
 from vllm.model_executor.layers.fused_moe.deep_gemm_moe import (
     _valid_deep_gemm, deep_gemm_moe_fp8)
 from vllm.model_executor.layers.fused_moe.moe_align_block_size import (
@@ -462,6 +464,72 @@ def fused_moe_kernel(
     tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
+def prepare_scales(
+    a1: torch.Tensor,
+    a1_scale: Optional[torch.Tensor],
+    topk_ids: torch.Tensor,
+    num_experts: int,
+    quant_dtype: Optional[torch.dtype],
+    block_shape: Optional[list[int]],
+    msg: str,
+):
+    from vllm.utils import round_up
+    max_num_tokens = round_up(a1.shape[0], 64)
+    num_tokens, hidden_dim = a1.size()
+    #topk = topk_ids.size(1)
+
+    tokens_per_expert = torch.zeros(num_experts,
+                                    dtype=torch.int,
+                                    device=a1.device)
+
+    num_local_experts = num_experts
+
+    b_a1 = torch.zeros(
+        (num_local_experts, max_num_tokens, hidden_dim),
+        dtype=quant_dtype if quant_dtype is not None else a1.dtype,
+        device=a1.device)
+
+    if quant_dtype is not None:
+        if block_shape is not None:
+            _, block_k = block_shape
+            k_tiles = (hidden_dim + block_k - 1) // block_k
+            scale_shape = (num_local_experts, max_num_tokens, k_tiles)
+        else:
+            num = 1
+            scale_shape = (num_local_experts, num, 1)
+
+        b_a1_scale = torch.zeros(scale_shape,
+                                 dtype=torch.float32,
+                                 device=a1.device)
+    else:
+        assert a1_scale is None
+        b_a1_scale = None
+
+    first_expert = 0
+    last_expert = first_expert + num_local_experts
+
+    for expert_id in range(first_expert, last_expert):
+        topks = torch.any(topk_ids == expert_id, dim=1).flatten()
+        rows = torch.count_nonzero(topks.flatten())
+        rhs = a1[:topks.numel()][topks]
+        idx = expert_id - first_expert
+        b_a1[idx, :rows, :] = rhs
+        if quant_dtype is not None:
+            rhs_a1_scale = a1_scale[:topks.numel()][topks]
+            if block_shape is None:
+                b_a1_scale[idx] = rhs_a1_scale
+            else:
+                assert rows == rhs_a1_scale.shape[0] and b_a1_scale.shape[
+                    -1] == rhs_a1_scale.shape[-1]
+                b_a1_scale[idx, :rows] = rhs_a1_scale
+
+        tokens_per_expert[idx] = rows
+
+    print(f"{msg} {b_a1_scale.shape}\n{b_a1_scale}")
+
+    return b_a1, b_a1_scale, tokens_per_expert
+
+
 def invoke_fused_moe_kernel(A: torch.Tensor,
                             B: torch.Tensor,
                             C: torch.Tensor,
@@ -489,7 +557,8 @@ def invoke_fused_moe_kernel(A: torch.Tensor,
     if use_fp8_w8a8 or use_int8_w8a8:
         assert B_scale is not None
         assert (block_shape is None or triton.cdiv(B.shape[-2], block_shape[0])
-                == B_scale.shape[-2])
+                == B_scale.shape[-2]), (
+                    f"{block_shape[0]} {B.shape[-2]} {B_scale.shape[-2]}")
         assert (block_shape is None or triton.cdiv(B.shape[-1], block_shape[1])
                 == B_scale.shape[-1])
 
@@ -980,20 +1049,6 @@ def get_config_dtype_str(
     return None
 
 
-# TODO (bnell): use scalar_type instead of bools?
-def get_config_qtype(
-    use_fp8_w8a8: bool,
-    use_int8_w8a8: bool,
-    use_int8_w8a16: bool,
-    use_int4_w4a16: bool,
-) -> Optional[torch.dtype]:
-    if use_fp8_w8a8:
-        return torch.float8_e4m3fn
-    elif use_int8_w8a8:
-        return torch.int8
-    return None
-
-
 def inplace_fused_experts(hidden_states: torch.Tensor,
                           w1: torch.Tensor,
                           w2: torch.Tensor,
@@ -1262,10 +1317,10 @@ def fused_experts_impl(
                                         use_int4_w4a16=use_int4_w4a16,
                                         dtype=hidden_states.dtype)
 
-    qtype = get_config_qtype(use_fp8_w8a8=use_fp8_w8a8,
-                             use_int8_w8a8=use_int8_w8a8,
-                             use_int8_w8a16=use_int8_w8a16,
-                             use_int4_w4a16=use_int4_w4a16)
+    qtype = get_config_quant_dtype(use_fp8_w8a8=use_fp8_w8a8,
+                                   use_int8_w8a8=use_int8_w8a8,
+                                   use_int8_w8a16=use_int8_w8a16,
+                                   use_int4_w4a16=use_int4_w4a16)
 
     get_config_func = functools.partial(
         try_get_optimal_moe_config,
@@ -1340,6 +1395,17 @@ def fused_experts_impl(
             moe_align_block_size(curr_topk_ids, config['BLOCK_SIZE_M'],
                                  global_num_experts, expert_map))
 
+        if False:
+            prepare_scales(
+                qcurr_hidden_states,
+                a1q_scale,
+                curr_topk_ids,
+                global_num_experts,
+                torch.float8_e4m3fn if use_fp8_w8a8 else None,
+                block_shape,
+                "First",
+            )
+
         invoke_fused_moe_kernel(qcurr_hidden_states,
                                 w1,
                                 intermediate_cache1,
@@ -1376,6 +1442,17 @@ def fused_experts_impl(
             qtype=qtype,
             per_channel_quant=per_channel_quant,
             block_shape=block_shape)
+
+        if False:
+            prepare_scales(
+                qintermediate_cache2,
+                a2q_scale,
+                curr_topk_ids,
+                global_num_experts,
+                torch.float8_e4m3fn if use_fp8_w8a8 else None,
+                block_shape,
+                "Second",
+            )
 
         invoke_fused_moe_kernel(qintermediate_cache2,
                                 w2,
@@ -1521,26 +1598,27 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
 
     def __init__(
         self,
-        use_fp8_w8a8: bool,
-        use_int8_w8a8: bool,
-        use_int8_w8a16: bool,
-        use_int4_w4a16: bool,
-        per_channel_quant: bool,
+        use_fp8_w8a8: bool = False,
+        use_int8_w8a8: bool = False,
+        use_int8_w8a16: bool = False,
+        use_int4_w4a16: bool = False,
+        per_act_token_quant: bool = False,
         block_shape: Optional[list[int]] = None,
-        block_m: Optional[int] = None,
     ):
-        super().__init__()
+        super().__init__(
+            FusedMoEQuantConfig.make(
+                use_fp8_w8a8=use_fp8_w8a8,
+                use_int8_w8a8=use_int8_w8a8,
+                use_int8_w8a16=use_int8_w8a16,
+                use_int4_w4a16=use_int4_w4a16,
+                per_act_token_quant=per_act_token_quant,
+                block_shape=block_shape,
+            ))
+
         self.use_fp8_w8a8 = use_fp8_w8a8
         self.use_int4_w4a16 = use_int4_w4a16
         self.use_int8_w8a8 = use_int8_w8a8
         self.use_int8_w8a16 = use_int8_w8a16
-        self.block_shape = block_shape
-        self.block_m = block_m
-        self.qtype = get_config_qtype(use_fp8_w8a8=use_fp8_w8a8,
-                                      use_int8_w8a8=use_int8_w8a8,
-                                      use_int8_w8a16=use_int8_w8a16,
-                                      use_int4_w4a16=use_int4_w4a16)
-        self.per_channel_quant = per_channel_quant
 
     def supports_chunking(self) -> bool:
         return True
@@ -1659,7 +1737,7 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
                                 use_int8_w8a8=self.use_int8_w8a8,
                                 use_int8_w8a16=self.use_int8_w8a16,
                                 use_int4_w4a16=self.use_int4_w4a16,
-                                per_channel_quant=self.per_channel_quant,
+                                per_channel_quant=self.per_act_token_quant,
                                 block_shape=self.block_shape)
 
         self.activation(activation, intermediate_cache2,
@@ -1668,8 +1746,8 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
         a2q_scale: Optional[torch.Tensor] = None
 
         qintermediate_cache2, a2q_scale = moe_kernel_quantize_input(
-            intermediate_cache2, a2_scale, self.qtype, self.per_channel_quant,
-            self.block_shape)
+            intermediate_cache2, a2_scale, self.quant_dtype,
+            self.per_act_token_quant, self.block_shape)
 
         invoke_fused_moe_kernel(qintermediate_cache2,
                                 w2,
@@ -1689,7 +1767,7 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
                                 use_int8_w8a8=self.use_int8_w8a8,
                                 use_int8_w8a16=self.use_int8_w8a16,
                                 use_int4_w4a16=self.use_int4_w4a16,
-                                per_channel_quant=self.per_channel_quant,
+                                per_channel_quant=self.per_act_token_quant,
                                 block_shape=self.block_shape)
 
 
@@ -1698,27 +1776,17 @@ def modular_triton_fused_moe(
     use_int8_w8a8: bool,
     use_int8_w8a16: bool,
     use_int4_w4a16: bool,
-    per_channel_quant: bool,
+    per_act_token_quant: bool,
     block_shape: Optional[list[int]] = None,
 ) -> mk.FusedMoEModularKernel:
-    qtype = get_config_qtype(
-        use_fp8_w8a8=use_fp8_w8a8,
-        use_int8_w8a8=use_int8_w8a8,
-        use_int8_w8a16=use_int8_w8a16,
-        use_int4_w4a16=use_int4_w4a16,
-    )
     return mk.FusedMoEModularKernel(
-        MoEPrepareAndFinalizeNoEP(
-            quant_dtype=qtype,
-            per_channel_quant=per_channel_quant,
-            block_shape=block_shape,
-        ),
+        MoEPrepareAndFinalizeNoEP(),
         TritonExperts(
             use_fp8_w8a8=use_fp8_w8a8,
             use_int8_w8a8=use_int8_w8a8,
             use_int8_w8a16=use_int8_w8a16,
             use_int4_w4a16=use_int4_w4a16,
-            per_channel_quant=per_channel_quant,
+            per_act_token_quant=per_act_token_quant,
             block_shape=block_shape,
         ),
     )

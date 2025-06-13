@@ -110,6 +110,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 f"Tensor parallel size {self.tp_size} is greater than "
                 f"the number of experts {config.num_experts}.")
 
+        logger.info("MoE quant config %s", quant_config.__dict__)
+
         self.experts = FusedMoE(num_experts=config.num_experts,
                                 top_k=config.num_experts_per_tok,
                                 hidden_size=config.hidden_size,
@@ -135,7 +137,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         router_logits, _ = self.gate(hidden_states)
         final_hidden_states = self.experts(hidden_states=hidden_states,
                                            router_logits=router_logits)
-        final_hidden_states = final_hidden_states
+
         if self.tp_size > 1:
             final_hidden_states = self.experts.maybe_all_reduce_tensor_model_parallel(  # noqa E501
                 final_hidden_states)

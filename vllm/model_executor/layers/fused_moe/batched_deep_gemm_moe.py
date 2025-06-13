@@ -6,6 +6,7 @@ import torch
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.logger import init_logger
+from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.utils import (
     _resize_cache, per_token_group_quant_fp8)
 
@@ -27,14 +28,19 @@ class BatchedDeepGemmExperts(mk.FusedMoEPermuteExpertsUnpermute):
         dp_size: Number of data-parallel ranks
         block_shape: Block quantization block shape
         """
-        super().__init__()
+
+        assert self.block_shape == [
+            self.DEEPGEMM_BLOCK_SHAPE, self.DEEPGEMM_BLOCK_SHAPE
+        ]
+        super().__init__(
+            FusedMoEQuantConfig(
+                quant_dtype=torch.float8_e4m3fn,
+                per_act_token_quant=False,
+                block_shape=block_shape,
+            ))
         self.max_num_tokens = max_num_tokens
         self.world_size = world_size
         self.dp_size = dp_size
-        self.block_shape = block_shape
-
-        assert (len(self.block_shape) == 2 and all(
-            [v == self.DEEPGEMM_BLOCK_SHAPE for v in self.block_shape]))
 
     def supports_chunking(self) -> bool:
         return False
