@@ -38,7 +38,6 @@ from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (QKVParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
-from vllm.model_executor.layers.pooler import Pooler, PoolingType
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
@@ -46,7 +45,8 @@ from vllm.model_executor.pooling_metadata import PoolingMetadata
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, PoolerOutput
 
-from .interfaces import SupportsCrossEncoding, SupportsLoRA, SupportsPP
+from .adapters import as_seq_cls_model
+from .interfaces import SupportsLoRA, SupportsPP
 from .qwen2 import Qwen2MLP as Qwen3MLP
 from .qwen2 import Qwen2Model
 from .utils import AutoWeightsLoader, PPMissingLayer, maybe_prefix
@@ -323,38 +323,31 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         return loader.load_weights(weights)
 
 
-class Qwen3ForSequenceClassification(nn.Module, SupportsLoRA,
-                                     SupportsCrossEncoding):
+class Qwen3ForSequenceClassification(as_seq_cls_model(Qwen3ForCausalLM)):
 
     def __init__(
         self,
         vllm_config: "VllmConfig",
         prefix: str = "",
     ) -> None:
-        super().__init__()
+        super().__init__(vllm_config=vllm_config, prefix=prefix)
 
+    def config_verify(self, vllm_config: "VllmConfig"):
         config = vllm_config.model_config.hf_config
-        quant_config = vllm_config.quant_config
-        pooler_config = vllm_config.model_config.pooler_config
 
+        is_original_qwen3_reranker = getattr(config,
+                                             "is_original_qwen3_reranker",
+                                             False)
+
+        if not is_original_qwen3_reranker:
+            return
+
+        tokens = getattr(config, "classifier_from_token", None)
+        assert tokens is not None and len(tokens) == 2, \
+            ("Try loading the original Qwen3 Reranker?, see: "
+             "https://github.com/vllm-project/vllm/tree/main/examples/offline_inference/qwen3_reranker.py")
+        config.num_labels = 1
         self.vllm_config = vllm_config
-        self.config = config
-        self.quant_config = quant_config
-        self.prefix = prefix
-        self.model = Qwen3Model(vllm_config=vllm_config,
-                                prefix=maybe_prefix(prefix, "model"))
-        self.score = RowParallelLinear(config.hidden_size,
-                                       config.num_labels,
-                                       quant_config=quant_config,
-                                       input_is_parallel=False,
-                                       bias=False,
-                                       prefix=maybe_prefix(prefix, "score"))
-
-        self._pooler = Pooler.from_config_with_defaults(
-            pooler_config,
-            pooling_type=PoolingType.LAST,
-            normalize=False,
-            softmax=True)
 
     def forward(
         self,
@@ -395,22 +388,10 @@ class Qwen3ForSequenceClassification(nn.Module, SupportsLoRA,
 
     def load_weights_from_original_qwen3_reranker(
             self, weights: Iterable[tuple[str, torch.Tensor]]):
-        tokens = getattr(self.config, "classifier_from_token", None)
-        assert tokens is not None and len(tokens) == 2, \
-            ("Try loading the original Qwen3 Reranker?, see: "
-             "https://github.com/vllm-project/vllm/tree/main/examples/offline_inference/qwen3_reranker.py")
 
-        self.config.num_labels = 1
         model_config = self.vllm_config.model_config
-
+        tokens = getattr(self.config, "classifier_from_token", None)
         device = self.score.weight.device
-        self.score = RowParallelLinear(self.config.hidden_size,
-                                       self.config.num_labels,
-                                       quant_config=self.quant_config,
-                                       input_is_parallel=False,
-                                       bias=False,
-                                       prefix=maybe_prefix(
-                                           self.prefix, "score")).to(device)
 
         if self.config.tie_word_embeddings:
             self.lm_head = self.model.embed_tokens
