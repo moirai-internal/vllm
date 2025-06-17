@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import asyncio
 import sys
@@ -201,6 +202,7 @@ class OpenAIServingCompletion(OpenAIServing):
                         prompt=engine_prompt,
                         request_id=request_id,
                         params=sampling_params,
+                        lora_request=lora_request,
                     )
                 else:
                     generator = self.engine_client.generate(
