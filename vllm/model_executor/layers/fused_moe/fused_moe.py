@@ -843,14 +843,14 @@ def try_get_optimal_moe_config_list(
             config = get_default_config(M, E, N, w1_shape[2], top_k, dtype,
                                         is_marlin, block_shape)
 
-    return [
+    return (
         config['BLOCK_SIZE_M'],
         config['BLOCK_SIZE_N'],
         config['BLOCK_SIZE_K'],
         config['GROUP_SIZE_M'],
         config.get('num_warps', 4),
         config.get('num_stages', 3 if not current_platform.is_rocm() else 2),
-    ]
+    )
 
 
 direct_register_custom_op(
@@ -1212,31 +1212,6 @@ def fused_experts(hidden_states: torch.Tensor,
             a1_scale=a1_scale,
             a2_scale=a2_scale,
             apply_router_weight_on_input=apply_router_weight_on_input,
-        )
-    elif True:
-        fn = modular_triton_fused_moe(use_fp8_w8a8=use_fp8_w8a8,
-                                      use_int8_w8a8=use_int8_w8a8,
-                                      use_int8_w8a16=use_int8_w8a16,
-                                      use_int4_w4a16=use_int4_w4a16,
-                                      per_channel_quant=per_channel_quant,
-                                      block_shape=block_shape)
-
-        return fn(
-            hidden_states=hidden_states,
-            w1=w1,
-            w2=w2,
-            topk_weights=topk_weights,
-            topk_ids=topk_ids,
-            activation=activation,
-            apply_router_weight_on_input=apply_router_weight_on_input,
-            global_num_experts=global_num_experts,
-            expert_map=expert_map,
-            w1_scale=w1_scale,
-            w2_scale=w2_scale,
-            w1_zp=w1_zp,
-            w2_zp=w2_zp,
-            a1_scale=a1_scale,
-            a2_scale=a2_scale,
         )
     else:
         return dispatch_fused_experts_func(inplace)(
