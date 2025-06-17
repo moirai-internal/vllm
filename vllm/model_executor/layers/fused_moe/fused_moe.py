@@ -844,12 +844,12 @@ def try_get_optimal_moe_config_list(
                                         is_marlin, block_shape)
 
     return (
-        config['BLOCK_SIZE_M'],
-        config['BLOCK_SIZE_N'],
-        config['BLOCK_SIZE_K'],
-        config['GROUP_SIZE_M'],
-        config.get('num_warps', 4),
-        config.get('num_stages', 3 if not current_platform.is_rocm() else 2),
+        config.get('BLOCK_SIZE_M', 0),
+        config.get('BLOCK_SIZE_N', 0),
+        config.get('BLOCK_SIZE_K', 0),
+        config.get('GROUP_SIZE_M', 0),
+        config.get('num_warps', 0),
+        config.get('num_stages', 0),
     )
 
 
@@ -870,22 +870,30 @@ def try_get_optimal_moe_config(
     is_marlin: bool = False,
     block_shape: Optional[list[int]] = None,
 ) -> dict[str, int]:
-    block_m, block_n, block_k, group_m, num_warps, num_stages = (
-        torch.ops.vllm.try_get_optimal_moe_config_list(
-            w1_shape,
-            w2_shape,
-            top_k,
-            dtype,
-            M,
-            is_marlin,
-            block_shape,
-        ))
-    return dict(BLOCK_SIZE_M=block_m,
-                BLOCK_SIZE_N=block_n,
-                BLOCK_SIZE_K=block_k,
-                GROUP_SIZE_M=group_m,
-                num_warps=num_warps,
-                num_stages=num_stages)
+    values = torch.ops.vllm.try_get_optimal_moe_config_list(
+        w1_shape,
+        w2_shape,
+        top_k,
+        dtype,
+        M,
+        is_marlin,
+        block_shape,
+    )
+
+    config = dict()
+
+    keys = ["BLOCK_SIZE_M", "BLOCK_SIZE_N",
+            "BLOCK_SIZE_K", "GROUP_SIZE_M",
+            "num_warps", "num_stages"]
+
+    assert len(keys) == len(values)
+
+    config = dict()
+    for k, v in zip(keys, values):
+        if v != 0:
+            config[k] = v
+
+    return config
 
 
 def vllm_topk_softmax(topk_weights: torch.Tensor, topk_indices: torch.Tensor,
@@ -1575,7 +1583,9 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
         self.use_int8_w8a16 = use_int8_w8a16
 
     @property
-    def activation_formats(self) -> tuple[mk.FusedMoEActivationFormat, mk.FusedMoEActivationFormat]:
+    def activation_formats(
+        self
+    ) -> tuple[mk.FusedMoEActivationFormat, mk.FusedMoEActivationFormat]:
         return (mk.FusedMoEActivationFormat.Standard,
                 mk.FusedMoEActivationFormat.Standard)
 
