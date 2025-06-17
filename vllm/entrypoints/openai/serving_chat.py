@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
@@ -212,19 +213,29 @@ class OpenAIServingChat(OpenAIServing):
         try:
             for i, engine_prompt in enumerate(engine_prompts):
                 sampling_params: Union[SamplingParams, BeamSearchParams]
-                prompt_len = len(engine_prompt["prompt_token_ids"])
 
-                default_max_tokens = current_platform.maybe_update_max_tokens(
-                    prompt_len=prompt_len,
-                    default_max_tokens=self.max_model_len - prompt_len)
+                user_max_tokens = (request.max_completion_tokens
+                                   or request.max_tokens)
+
+                max_output_tokens = current_platform.get_max_output_tokens(
+                    prompt_len=len(engine_prompt["prompt_token_ids"]))
+
+                default_max_tokens = self.max_model_len - len(
+                    engine_prompt["prompt_token_ids"])
+
+                max_tokens = min(val
+                                 for val in (max_output_tokens,
+                                             user_max_tokens,
+                                             self.default_sampling_params.get(
+                                                 "max_tokens", sys.maxsize),
+                                             default_max_tokens))
 
                 if request.use_beam_search:
                     sampling_params = request.to_beam_search_params(
-                        default_max_tokens, self.default_sampling_params)
+                        max_tokens, self.default_sampling_params)
                 else:
                     sampling_params = request.to_sampling_params(
-                        default_max_tokens,
-                        self.model_config.logits_processor_pattern,
+                        max_tokens, self.model_config.logits_processor_pattern,
                         self.default_sampling_params)
 
                 self._log_inputs(request_id,

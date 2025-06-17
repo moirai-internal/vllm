@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
@@ -156,17 +157,27 @@ class OpenAIServingCompletion(OpenAIServing):
                 else:
                     assert_never(engine_prompt)
 
-                default_max_tokens = current_platform.maybe_update_max_tokens(
-                    prompt_len=input_length,
-                    default_max_tokens=self.max_model_len - input_length)
+                user_max_tokens = (request.max_completion_tokens
+                                   or request.max_tokens)
+
+                max_output_tokens = current_platform.get_max_output_tokens(
+                    prompt_len=input_length)
+
+                default_max_tokens = self.max_model_len - input_length
+
+                max_tokens = min(val
+                                 for val in (max_output_tokens,
+                                             user_max_tokens,
+                                             self.default_sampling_params.get(
+                                                 "max_tokens", sys.maxsize),
+                                             default_max_tokens))
 
                 if request.use_beam_search:
                     sampling_params = request.to_beam_search_params(
-                        default_max_tokens, self.default_sampling_params)
+                        max_tokens, self.default_sampling_params)
                 else:
                     sampling_params = request.to_sampling_params(
-                        default_max_tokens,
-                        self.model_config.logits_processor_pattern,
+                        max_tokens, self.model_config.logits_processor_pattern,
                         self.default_sampling_params)
 
                 request_id_item = f"{request_id}-{i}"

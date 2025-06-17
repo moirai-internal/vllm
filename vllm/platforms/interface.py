@@ -3,6 +3,7 @@ import enum
 import os
 import platform
 import random
+import sys
 from platform import uname
 from typing import TYPE_CHECKING, NamedTuple, Optional, Union
 
@@ -156,10 +157,8 @@ class Platform:
     def is_out_of_tree(self) -> bool:
         return self._enum == PlatformEnum.OOT
 
-    def maybe_update_max_tokens(self, prompt_len: int,
-                                default_max_tokens: int) -> int:
-        # Used for hardware platforms that only allow certain shapes.
-        return default_max_tokens
+    def get_max_output_tokens(self, prompt_len: int) -> int:
+        return sys.maxsize
 
     def is_cuda_alike(self) -> bool:
         """Stateless version of {func}`torch.cuda.is_available`."""
