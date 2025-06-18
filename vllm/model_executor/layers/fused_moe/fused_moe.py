@@ -840,6 +840,11 @@ def try_get_optimal_moe_config(
             # Else use the default config
             config = get_default_config(M, E, N, w1_shape[2], top_k, dtype,
                                         is_marlin, block_shape)
+    config = config.copy()
+    BLOCK_SIZE_K = config.pop("BLOCK_SIZE_K")
+    if block_shape is not None:
+        BLOCK_SIZE_K = min(BLOCK_SIZE_K, min(block_shape[0], block_shape[1]))
+    config["BLOCK_SIZE_K"] = BLOCK_SIZE_K
     return config
 
 
