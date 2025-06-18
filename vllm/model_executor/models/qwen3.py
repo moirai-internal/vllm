@@ -41,9 +41,8 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from vllm.model_executor.pooling_metadata import PoolingMetadata
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.sequence import IntermediateTensors, PoolerOutput
+from vllm.sequence import IntermediateTensors
 
 from .adapters import as_seq_cls_model
 from .interfaces import SupportsLoRA, SupportsPP
@@ -349,32 +348,6 @@ class Qwen3ForSequenceClassification(as_seq_cls_model(Qwen3ForCausalLM)):
         config.num_labels = 1
         self.vllm_config = vllm_config
 
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        positions: torch.Tensor,
-        intermediate_tensors: Optional[IntermediateTensors] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        return self.model(input_ids=input_ids,
-                          positions=positions,
-                          inputs_embeds=inputs_embeds,
-                          intermediate_tensors=intermediate_tensors)
-
-    def pooler(
-        self,
-        hidden_states: torch.Tensor,
-        pooling_metadata: PoolingMetadata,
-    ) -> Optional[PoolerOutput]:
-        hidden_states = self._pooler.extract_states(hidden_states,
-                                                    pooling_metadata)
-        logits, _ = self.score(hidden_states)
-        pooled_data = self._pooler.head(logits, pooling_metadata)
-        pooled_outputs = [
-            self._pooler.build_output(data.squeeze(-1)) for data in pooled_data
-        ]
-        return PoolerOutput(outputs=pooled_outputs)
-
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]):
         is_original_qwen3_reranker = getattr(self.config,
                                              "is_original_qwen3_reranker",
@@ -419,5 +392,6 @@ class Qwen3ForSequenceClassification(as_seq_cls_model(Qwen3ForCausalLM)):
         self.score.weight.data.copy_(weight)
 
         del self.lm_head
-        loaded_weights.add("classifier.weight")
+        loaded_weights.add("score.weight")
         loaded_weights.discard("lm_head.weight")
+        return loaded_weights
