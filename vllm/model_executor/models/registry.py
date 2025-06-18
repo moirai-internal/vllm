@@ -172,9 +172,10 @@ _CROSS_ENCODER_MODELS = {
     "ModernBertForSequenceClassification": ("modernbert",
                                             "ModernBertForSequenceClassification"),
     # [Auto-converted (see adapters.py)]
-    "Qwen2ForSequenceClassification": ("qwen2", "Qwen2ForCausalLM"), # noqa: E501
-    "Qwen3ForSequenceClassification": ("qwen3", "Qwen3ForSequenceClassification"), # noqa: E501
     "GemmaForSequenceClassification": ("gemma", "GemmaForCausalLM"),
+    "GteNewForSequenceClassification": ("bert_with_rope", "GteNewForSequenceClassification"), # noqa: E501
+    "Qwen2ForSequenceClassification": ("qwen2", "Qwen2ForCausalLM"),
+    "Qwen3ForSequenceClassification": ("qwen3", "Qwen3ForSequenceClassification"), # noqa: E501
 }
 
 _MULTIMODAL_MODELS = {

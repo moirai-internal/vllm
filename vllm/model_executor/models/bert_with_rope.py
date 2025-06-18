@@ -20,15 +20,21 @@ from vllm.model_executor.layers.linear import (ColumnParallelLinear,
                                                QKVParallelLinear,
                                                ReplicatedLinear,
                                                RowParallelLinear)
+from vllm.model_executor.layers.pooler import ClassifierPooler
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models import SupportsV0Only
-from vllm.model_executor.models.interfaces import SupportsQuant
-from vllm.model_executor.models.utils import WeightsMapper
-from vllm.sequence import IntermediateTensors
+from vllm.model_executor.models.bert import BertPooler
+from vllm.model_executor.models.interfaces import (SupportsCrossEncoding,
+                                                   SupportsQuant)
+from vllm.model_executor.models.utils import WeightsMapper, maybe_prefix
+from vllm.model_executor.pooling_metadata import PoolingMetadata
+from vllm.sequence import IntermediateTensors, PoolerOutput
+from vllm.transformers_utils.config import (
+    get_cross_encoder_activation_function)
 
 logger = init_logger(__name__)
 
@@ -405,9 +411,14 @@ class BertWithRopeEncoder(nn.Module):
 class BertWithRope(nn.Module, SupportsV0Only, SupportsQuant):
     hf_to_vllm_mapper = WeightsMapper(orig_to_new_prefix={"model.": ""})
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+    def __init__(self,
+                 *,
+                 vllm_config: VllmConfig,
+                 prefix: str = "",
+                 add_pooling_layer=False):
         super().__init__()
         self.vllm_config = vllm_config
+        self.add_pooling_layer = add_pooling_layer
         self.config = self.config_verify(vllm_config)
         self.embeddings = BertWithRopeEmbedding(self.config)
         self.encoder = BertWithRopeEncoder(
@@ -415,6 +426,8 @@ class BertWithRope(nn.Module, SupportsV0Only, SupportsQuant):
             bias=getattr(self.config, "bias", True),
             rotary_kwargs=self.config.rotary_kwargs,
             prefix=f"{prefix}.encoder")
+        if self.add_pooling_layer:
+            self.pooler = BertPooler(self.config)
 
     def config_verify(self, vllm_config):
         raise NotImplementedError
@@ -450,7 +463,7 @@ class BertWithRope(nn.Module, SupportsV0Only, SupportsQuant):
         params_dict = dict(self.named_parameters())
         loaded_params: set[str] = set()
         for name, loaded_weight in weights:
-            if "pooler" in name:
+            if not self.add_pooling_layer and "pooler" in name:
                 continue
             for (param_name, weight_name, shard_id) in stacked_params_mapping:
                 if weight_name not in name:
@@ -591,8 +604,8 @@ class GteNewModel(BertWithRope):
             "attention.o_proj": "attn.out_proj",
         })
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
-        super().__init__(vllm_config=vllm_config, prefix=prefix)
+    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "", **kwargs):
+        super().__init__(vllm_config=vllm_config, prefix=prefix, **kwargs)
 
         # GteNewModel only gate_up_proj does not have bias.
         # Hack method learned from vllm/model_executor/models/glm.py
@@ -762,3 +775,65 @@ class JinaRobertaModel(BertWithRope):
                                                    torch.Tensor]]) -> set[str]:
         weights = self.jina_merge_lora_weights(weights)
         return super().load_weights(weights)
+
+
+class GteNewForSequenceClassification(nn.Module, SupportsCrossEncoding,
+                                      SupportsQuant):
+
+    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+        super().__init__()
+        config = vllm_config.model_config.hf_config
+
+        self.default_activation_function = \
+            get_cross_encoder_activation_function(config)
+
+        self.num_labels = config.num_labels
+        self.new = GteNewModel(vllm_config=vllm_config,
+                               prefix=maybe_prefix(prefix, "new"),
+                               add_pooling_layer=True)
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        self._pooler = ClassifierPooler(vllm_config.model_config,
+                                        self.classifier, self.new.pooler)
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]):
+
+        self_weights = []
+
+        def weight_filter():
+            for name, weight in weights:
+                if name.startswith("new."):
+                    yield (name[len("new."):], weight)
+                else:
+                    self_weights.append((name, weight))
+
+        self.new.load_weights(weight_filter())
+
+        params_dict = dict(self.named_parameters())
+
+        for name, loaded_weight in self_weights:
+            if name.startswith("classifier"):
+                param = params_dict[name]
+                weight_loader = getattr(param, "weight_loader",
+                                        default_weight_loader)
+                weight_loader(param, loaded_weight)
+
+    def pooler(
+        self,
+        hidden_states: torch.Tensor,
+        pooling_metadata: PoolingMetadata,
+    ) -> Optional[PoolerOutput]:
+        return self._pooler(hidden_states, pooling_metadata)
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor],
+        positions: torch.Tensor,
+        intermediate_tensors: Optional[IntermediateTensors] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        return self.new(input_ids=input_ids,
+                        positions=positions,
+                        inputs_embeds=inputs_embeds,
+                        intermediate_tensors=intermediate_tensors,
+                        token_type_ids=token_type_ids)
