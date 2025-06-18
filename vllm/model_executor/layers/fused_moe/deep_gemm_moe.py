@@ -14,6 +14,9 @@ from vllm.model_executor.layers.fused_moe.prepare_finalize import (
     MoEPrepareAndFinalizeNoEP)
 from vllm.model_executor.layers.fused_moe.utils import (
     _resize_cache, per_token_group_quant_fp8)
+from vllm.model_executor.layers.quantization.deepgemm import (  # noqa: E501
+    m_grouped_gemm_fp8_fp8_bf16_nt_contiguous_deepgemm as
+    m_grouped_gemm_fp8_fp8_bf16_nt_contiguous_deepgemm)
 from vllm.utils import round_up
 
 logger = init_logger(__name__)
@@ -48,7 +51,7 @@ def _valid_deep_gemm(hidden_states: torch.Tensor, w1: torch.Tensor,
     M = hidden_states.size(0)
     _, K, N = w2.size()
     if not _valid_deep_gemm_shape(M, N, K):
-        logger.debug("DeepGemm disabled: unalinged problem size.")
+        logger.debug("DeepGemm disabled: unaligned problem size.")
         return False
 
     if (w1.dtype != torch.float8_e4m3fn or w2.dtype != torch.float8_e4m3fn):
@@ -108,8 +111,6 @@ class DeepGemmExperts(mk.FusedMoEPermuteExpertsUnpermute):
         workspace2: torch.Tensor,
         expert_num_tokens: Optional[torch.Tensor],
     ):
-        import deep_gemm as dg
-
         a1q = hidden_states
         _, N, K = w1.size()
 
@@ -144,8 +145,8 @@ class DeepGemmExperts(mk.FusedMoEPermuteExpertsUnpermute):
                                   (M_sum, N // 2))
         mm2_out = _resize_cache(workspace2, (M_sum, K))
 
-        dg.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
-            (a1q, a1q_scale), (w1, w1_scale), mm1_out, expert_ids)
+        torch.ops.vllm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous_deepgemm(
+            a1q, a1q_scale, w1, w1_scale, mm1_out, expert_ids)
 
         self.activation(activation, act_out, mm1_out.view(-1, N))
 
@@ -155,8 +156,8 @@ class DeepGemmExperts(mk.FusedMoEPermuteExpertsUnpermute):
                                                    column_major_scales=True,
                                                    out_q=quant_out)
 
-        dg.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous(
-            (a2q, a2q_scale), (w2, w2_scale), mm2_out, expert_ids)
+        torch.ops.vllm.m_grouped_gemm_fp8_fp8_bf16_nt_contiguous_deepgemm(
+            a2q, a2q_scale, w2, w2_scale, mm2_out, expert_ids)
 
         torch.index_select(mm2_out, 0, inv_perm, out=output)
 
