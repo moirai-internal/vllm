@@ -252,6 +252,12 @@ class ChatCompletionRequest(OpenAIBaseModel):
         ChatCompletionNamedToolChoiceParam,
     ]] = "none"
 
+    # Custom sampling params
+    vllm_xargs: Optional[dict[str, Union[str, int, float]]] = Field(
+        default=None,
+        description=("Additional kwargs to pass to sampling."),
+    )
+
     # NOTE this will be ignored by vLLM -- the model determines the behavior
     parallel_tool_calls: Optional[bool] = False
     user: Optional[str] = None
@@ -553,8 +559,12 @@ class ChatCompletionRequest(OpenAIBaseModel):
             logit_bias=self.logit_bias,
             bad_words= self.bad_words,
             allowed_token_ids=self.allowed_token_ids,
-            extra_args=({"kv_transfer_params": self.kv_transfer_params}
-                        if self.kv_transfer_params else None))
+            # Pass in `extra_body` args and kv transfer params
+            extra_args={**({"kv_transfer_params": self.kv_transfer_params}
+                            if self.kv_transfer_params else {}),
+                            **(self.vllm_xargs if self.vllm_xargs else {})
+                         }
+        )
 
     def _get_guided_json_from_tool(
             self) -> Optional[Union[str, dict, BaseModel]]:
@@ -777,6 +787,12 @@ class CompletionRequest(OpenAIBaseModel):
     top_p: Optional[float] = None
     user: Optional[str] = None
 
+    # Custom args param
+    vllm_xargs: Optional[dict[str, Union[str, int, float]]] = Field(
+        default=None,
+        description=("Additional kwargs to pass to sampling."),
+    )
+
     # --8<-- [start:completion-sampling-params]
     use_beam_search: bool = False
     top_k: Optional[int] = None
@@ -997,8 +1013,12 @@ class CompletionRequest(OpenAIBaseModel):
             guided_decoding=guided_decoding,
             logit_bias=self.logit_bias,
             allowed_token_ids=self.allowed_token_ids,
-            extra_args=({"kv_transfer_params": self.kv_transfer_params}
-                        if self.kv_transfer_params else None))
+            # Pass in `extra_body` args and kv transfer params
+            extra_args={**({"kv_transfer_params": self.kv_transfer_params}
+                            if self.kv_transfer_params else {}),
+                            **(self.vllm_xargs if self.vllm_xargs else {})
+                         }
+            )
 
     @model_validator(mode="before")
     @classmethod
@@ -1783,6 +1803,12 @@ class TranscriptionRequest(OpenAIBaseModel):
         "min_p": 0.0,
     }
 
+    # Custom sampling params
+    vllm_xargs: Optional[dict[str, Union[str, int, float]]] = Field(
+        default=None,
+        description=("Additional kwargs to pass to sampling."),
+    )
+
     def to_sampling_params(
             self,
             default_max_tokens: int,
@@ -1823,7 +1849,8 @@ class TranscriptionRequest(OpenAIBaseModel):
                                             presence_penalty=self.presence_penalty,
                                             output_kind=RequestOutputKind.DELTA
                                             if self.stream \
-                                            else RequestOutputKind.FINAL_ONLY)
+                                            else RequestOutputKind.FINAL_ONLY,
+                                            extra_args=self.vllm_xargs)
 
     @model_validator(mode="before")
     @classmethod
