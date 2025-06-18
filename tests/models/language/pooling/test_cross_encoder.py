@@ -3,6 +3,7 @@
 import pytest
 
 from .mteb_utils import RerankModelInfo, mteb_test_rerank_models
+from .score_utils import ping_pong_test_score_models
 
 RERANK_MODELS = [
     RerankModelInfo("cross-encoder/ms-marco-TinyBERT-L-2-v2",
@@ -16,3 +17,9 @@ RERANK_MODELS = [
 def test_rerank_models_mteb(hf_runner, vllm_runner,
                             model_info: RerankModelInfo) -> None:
     mteb_test_rerank_models(hf_runner, vllm_runner, model_info)
+
+
+@pytest.mark.parametrize("model_info", RERANK_MODELS)
+def test_rerank_models_correctness(hf_runner, vllm_runner,
+                                   model_info: RerankModelInfo) -> None:
+    ping_pong_test_score_models(hf_runner, vllm_runner, model_info)
