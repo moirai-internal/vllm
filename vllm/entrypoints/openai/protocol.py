@@ -670,6 +670,10 @@ class ChatCompletionRequest(OpenAIBaseModel):
     @classmethod
     def check_tool_usage(cls, data):
 
+        # handles case where `"tool_choice":null` is set in json payload
+        if "tool_choice" in data and data.get("tool_choice") is None:
+            data.pop("tool_choice", None)
+
         # if "tool_choice" is not specified but tools are provided,
         # default to "auto" tool_choice
         if "tool_choice" not in data and data.get("tools"):
