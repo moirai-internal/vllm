@@ -5,6 +5,7 @@ import pytest
 from ...utils import EmbedModelInfo, RerankModelInfo
 from .embed_utils import correctness_test_embed_models
 from .mteb_utils import mteb_test_embed_models, mteb_test_rerank_models
+from .score_utils import ping_pong_test_score_models
 
 MODELS = [
     ########## BertModel
@@ -91,3 +92,9 @@ def test_embed_models_correctness(hf_runner, vllm_runner,
 def test_rerank_models_mteb(hf_runner, vllm_runner,
                             model_info: RerankModelInfo) -> None:
     mteb_test_rerank_models(hf_runner, vllm_runner, model_info)
+
+
+@pytest.mark.parametrize("model_info", RERANK_MODELS)
+def test_rerank_models_correctness(hf_runner, vllm_runner,
+                                   model_info: RerankModelInfo) -> None:
+    ping_pong_test_score_models(hf_runner, vllm_runner, model_info)
