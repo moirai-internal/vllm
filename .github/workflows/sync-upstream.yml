@@ -1,0 +1,96 @@
+name: Sync from Upstream
+
+on:
+  schedule:
+    # Run every 2 weeks (bi-weekly) on Sundays at 2 AM UTC
+    - cron: "0 2 * * 0/2"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/vllm-project/vllm.git || true
+          git remote set-url upstream https://github.com/vllm-project/vllm.git
+
+      - name: Fetch upstream changes
+        run: |
+          git fetch upstream
+          git fetch origin
+
+      - name: Sync main branch
+        run: |
+          git checkout main
+
+          # Check if there are any new commits to sync
+          BEHIND_COUNT=$(git rev-list --count HEAD..upstream/main)
+          if [ "$BEHIND_COUNT" -eq 0 ]; then
+            echo "Already up to date with upstream. No sync needed."
+            echo "sync_needed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "sync_needed=true" >> $GITHUB_OUTPUT
+          echo "Found $BEHIND_COUNT commits behind upstream"
+
+          git rebase upstream/main || {
+            echo "Rebase conflict detected. Creating a PR instead."
+            git rebase --abort
+            exit 1
+          }
+          git push --force-with-lease origin main
+        continue-on-error: true
+        id: sync_main
+
+      - name: Create sync PR if rebase failed
+        if: steps.sync_main.outcome == 'failure' && steps.sync_main.outputs.sync_needed == 'true'
+        run: |
+          BRANCH_NAME="sync-upstream-$(date +'%Y%m%d-%H%M%S')"
+          git checkout -b "$BRANCH_NAME"
+
+          # Try to rebase again, this time we'll commit the conflicts
+          git rebase upstream/main || {
+            echo "Resolving rebase conflicts..."
+            git add .
+            git rebase --continue || {
+              git rebase --abort
+              git merge upstream/main --no-edit --allow-unrelated-histories || {
+                git add .
+                git commit -m "Resolve sync conflicts from upstream"
+              }
+            }
+          }
+          git push origin "$BRANCH_NAME"
+
+          # Create PR using GitHub CLI
+          gh pr create \
+            --title "Sync from upstream ($(date +'%Y-%m-%d'))" \
+            --body "Automated sync from upstream repository with conflicts resolved. Please review before merging." \
+            --head "$BRANCH_NAME" \
+            --base main
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Sync tags
+        if: steps.sync_main.outcome == 'success' || steps.sync_main.outcome == 'failure'
+        run: |
+          git fetch upstream --tags
+          git push origin --tags
+        continue-on-error: true
