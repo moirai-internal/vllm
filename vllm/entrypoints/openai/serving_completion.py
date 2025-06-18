@@ -161,17 +161,19 @@ class OpenAIServingCompletion(OpenAIServing):
                 user_max_tokens = (request.max_completion_tokens
                                    or request.max_tokens)
 
+                if user_max_tokens is not int:
+                    user_max_tokens = sys.maxsize
+
                 max_output_tokens = current_platform.get_max_output_tokens(
                     prompt_len=input_length)
 
                 default_max_tokens = self.max_model_len - input_length
 
-                max_tokens = min(val
-                                 for val in (max_output_tokens,
-                                             user_max_tokens,
-                                             self.default_sampling_params.get(
-                                                 "max_tokens", sys.maxsize),
-                                             default_max_tokens))
+                max_tokens = min(
+                    map(lambda x: int(x),
+                        (max_output_tokens, user_max_tokens,
+                         self.default_sampling_params.get(
+                             "max_tokens", sys.maxsize), default_max_tokens)))
 
                 if request.use_beam_search:
                     sampling_params = request.to_beam_search_params(

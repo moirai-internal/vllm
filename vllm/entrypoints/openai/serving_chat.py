@@ -225,12 +225,11 @@ class OpenAIServingChat(OpenAIServing):
                 default_max_tokens = self.max_model_len - len(
                     engine_prompt["prompt_token_ids"])
 
-                max_tokens = min(val
-                                 for val in (max_output_tokens,
-                                             user_max_tokens,
-                                             self.default_sampling_params.get(
-                                                 "max_tokens", sys.maxsize),
-                                             default_max_tokens))
+                max_tokens = min(
+                    map(lambda x: int(x),
+                        (max_output_tokens, user_max_tokens,
+                         self.default_sampling_params.get(
+                             "max_tokens", sys.maxsize), default_max_tokens)))
 
                 if request.use_beam_search:
                     sampling_params = request.to_beam_search_params(
