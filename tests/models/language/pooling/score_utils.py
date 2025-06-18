@@ -52,5 +52,6 @@ def ping_pong_test_score_models(hf_runner,
         ]
 
     for i in range(len(sentences)):
-        assert float(hf_outputs[i]) == pytest.approx(float(vllm_outputs[i]), rel=0.01), \
+        assert float(hf_outputs[i]) == pytest.approx(float(vllm_outputs[i]),
+                                                     rel=0.01), \
             f"Test failed at #{i}, vllm: {vllm_outputs[i]}, st: {hf_outputs[i]}"

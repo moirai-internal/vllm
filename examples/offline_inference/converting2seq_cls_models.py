@@ -77,7 +77,8 @@ def converting(model_name, classifier_from_tokens, path, method, device="cpu"):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Converting *ForCausalLM models to *ForSequenceClassification models."
+        description="Converting *ForCausalLM models to "
+        "*ForSequenceClassification models."
     )
     parser.add_argument(
         "--model_name", type=str, default="Qwen/Qwen3-Reranker-0.6B", help="Model name"
