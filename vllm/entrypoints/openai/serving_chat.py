@@ -3,8 +3,6 @@
 
 import asyncio
 import json
-import re
-import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
@@ -36,9 +34,9 @@ from vllm.entrypoints.openai.serving_models import OpenAIServingModels
 from vllm.entrypoints.openai.tool_parsers import ToolParser, ToolParserManager
 from vllm.entrypoints.openai.tool_parsers.mistral_tool_parser import (
     MistralToolCall)
+from vllm.entrypoints.utils import get_max_tokens
 from vllm.logger import init_logger
 from vllm.outputs import CompletionOutput, RequestOutput
-from vllm.platforms import current_platform
 from vllm.reasoning import ReasoningParser, ReasoningParserManager
 from vllm.sampling_params import BeamSearchParams, SamplingParams
 from vllm.sequence import Logprob
@@ -216,20 +214,11 @@ class OpenAIServingChat(OpenAIServing):
             for i, engine_prompt in enumerate(engine_prompts):
                 sampling_params: Union[SamplingParams, BeamSearchParams]
 
-                user_max_tokens = (request.max_completion_tokens
-                                   or request.max_tokens)
-
-                max_output_tokens = current_platform.get_max_output_tokens(
-                    prompt_len=len(engine_prompt["prompt_token_ids"]))
-
-                default_max_tokens = self.max_model_len - len(
-                    engine_prompt["prompt_token_ids"])
-
-                max_tokens = min(
-                    map(lambda x: int(x),
-                        (max_output_tokens, user_max_tokens,
-                         self.default_sampling_params.get(
-                             "max_tokens", sys.maxsize), default_max_tokens)))
+                max_tokens = get_max_tokens(
+                    max_model_len=self.max_model_len,
+                    request=request,
+                    input_length=len(engine_prompt["prompt_token_ids"]),
+                    default_sampling_params=self.default_sampling_params)
 
                 if request.use_beam_search:
                     sampling_params = request.to_beam_search_params(

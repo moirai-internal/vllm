@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import asyncio
-import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from collections.abc import Sequence as GenericSequence
@@ -31,11 +30,11 @@ from vllm.entrypoints.openai.serving_engine import (OpenAIServing,
                                                     clamp_prompt_logprobs,
                                                     is_text_tokens_prompt)
 from vllm.entrypoints.openai.serving_models import OpenAIServingModels
+from vllm.entrypoints.utils import get_max_tokens
 from vllm.inputs.data import (EmbedsPrompt, TokensPrompt, is_embeds_prompt,
                               is_tokens_prompt)
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
-from vllm.platforms import current_platform
 from vllm.sampling_params import BeamSearchParams, SamplingParams
 from vllm.sequence import Logprob
 from vllm.transformers_utils.tokenizer import AnyTokenizer
@@ -158,22 +157,11 @@ class OpenAIServingCompletion(OpenAIServing):
                 else:
                     assert_never(engine_prompt)
 
-                user_max_tokens = (request.max_completion_tokens
-                                   or request.max_tokens)
-
-                if user_max_tokens is not int:
-                    user_max_tokens = sys.maxsize
-
-                max_output_tokens = current_platform.get_max_output_tokens(
-                    prompt_len=input_length)
-
-                default_max_tokens = self.max_model_len - input_length
-
-                max_tokens = min(
-                    map(lambda x: int(x),
-                        (max_output_tokens, user_max_tokens,
-                         self.default_sampling_params.get(
-                             "max_tokens", sys.maxsize), default_max_tokens)))
+                max_tokens = get_max_tokens(
+                    max_model_len=self.max_model_len,
+                    request=request,
+                    input_length=input_length,
+                    default_sampling_params=self.default_sampling_params)
 
                 if request.use_beam_search:
                     sampling_params = request.to_beam_search_params(
