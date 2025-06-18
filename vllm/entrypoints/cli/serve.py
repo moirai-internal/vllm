@@ -237,6 +237,7 @@ def run_multi_api_server(args: argparse.Namespace):
         logger.info("Started DP Coordinator process (PID: %d)",
                     coordinator.proc.pid)
 
+    api_server_manager: Optional[APIServerProcessManager] = None
     api_server_manager_kwargs = dict(
         target_server_fn=run_api_server_worker_proc,
         listen_address=listen_address,
@@ -295,7 +296,6 @@ def run_multi_api_server(args: argparse.Namespace):
                 start_index=dp_rank,
                 local_start_index=0)
 
-        api_server_manager: Optional[APIServerProcessManager] = None
         # We must delay the start of the API servers until the local
         # engine is started, since we get the front-end stats update
         # address from the coordinator via the handshake with the
