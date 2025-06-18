@@ -5,6 +5,7 @@ import argparse
 import os
 import signal
 import sys
+from typing import Optional
 
 import uvloop
 import zmq
@@ -294,16 +295,15 @@ def run_multi_api_server(args: argparse.Namespace):
                 start_index=dp_rank,
                 local_start_index=0)
 
-        # Start API servers using the manager.
+        api_server_manager: Optional[APIServerProcessManager] = None
+        # We must delay the start of the API servers until the local
+        # engine is started, since we get the front-end stats update
+        # address from the coordinator via the handshake with the
+        # local engine.
         if dp_rank == 0 or not external_dp_lb:
+            # Start API servers using the manager.
             api_server_manager = APIServerProcessManager(
                 **api_server_manager_kwargs)
-        else:
-            # We must delay the start of the API servers until the local
-            # engine is started, since we get the front-end stats update
-            # address from the coordinator via the handshake with the
-            # local engine.
-            api_server_manager = None
 
         # Wait for engine handshakes to complete.
         if external_dp_lb and dp_rank > 0:
