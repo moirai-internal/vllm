@@ -202,7 +202,8 @@ jobs:
             --title "Cherry-pick: $PREVIOUS_BRANCH_NAME → $BRANCH_NAME" \
             --body "$PR_BODY" \
             --base "$BRANCH_NAME" \
-            --head "$PR_BRANCH"
+            --head "$CONFLICT_BRANCH" \
+            --reviewer "CatherineSue,shenoyvvarun,slin1237,YouNeedCryDear,upfixer,key4ng"
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -289,7 +290,8 @@ jobs:
             --title "Cherry-pick conflicts: $PREVIOUS_BRANCH_NAME → $BRANCH_NAME" \
             --body "$PR_BODY" \
             --base "$BRANCH_NAME" \
-            --head "$CONFLICT_BRANCH"
+            --head "$CONFLICT_BRANCH" \
+            --reviewer "CatherineSue,shenoyvvarun,slin1237,YouNeedCryDear,upfixer,key4ng"
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
 
