@@ -81,16 +81,53 @@ jobs:
 
           # Create PR using GitHub CLI
           gh pr create \
+            --repo "${{ github.repository }}" \
             --title "Sync from upstream ($(date +'%Y-%m-%d'))" \
             --body "Automated sync from upstream repository with conflicts resolved. Please review before merging." \
             --head "$BRANCH_NAME" \
-            --base main
+            --base "main" \
+            --reviewer "CatherineSue,shenoyvvarun,slin1237,YouNeedCryDear,upfixer,key4ng"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Sync tags
         if: steps.sync_main.outcome == 'success' || steps.sync_main.outcome == 'failure'
+        id: sync_tags
         run: |
+          # Fetch tags from upstream
           git fetch upstream --tags
+
+          # Get list of new tags before pushing
+          NEW_TAGS=$(git tag --list | grep -v -F -f <(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||') || true)
+
+          # Push tags to origin
           git push origin --tags
+
+          # Save new tags for next step
+          if [ -n "$NEW_TAGS" ]; then
+            echo "new_tags<<EOF" >> $GITHUB_OUTPUT
+            echo "$NEW_TAGS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "has_new_tags=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_new_tags=false" >> $GITHUB_OUTPUT
+          fi
         continue-on-error: true
+
+      - name: Trigger feature branch creation for new tags
+        if: steps.sync_tags.outputs.has_new_tags == 'true'
+        run: |
+          NEW_TAGS="${{ steps.sync_tags.outputs.new_tags }}"
+
+          # Trigger workflow for each new tag
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^v[0-9] ]]; then
+              echo "Triggering feature branch creation for tag: $tag"
+              gh workflow run create-feature-branches.yml \
+                --repo ${{ github.repository }} \
+                --field tag="$tag"
+            fi
+          done <<< "$NEW_TAGS"
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
+
