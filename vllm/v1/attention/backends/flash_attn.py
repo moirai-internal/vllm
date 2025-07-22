@@ -14,6 +14,7 @@ from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
 from vllm.attention.layer import Attention
 from vllm.attention.ops.merge_attn_states import merge_attn_states
 from vllm.attention.utils.fa_utils import (flash_attn_supports_fp8,
+<<<<<<< HEAD
                                            get_flash_attn_version,
                                            is_flash_attn_varlen_func_available)
 
@@ -22,6 +23,9 @@ if is_flash_attn_varlen_func_available():
                                                get_scheduler_metadata,
                                                reshape_and_cache_flash)
 
+=======
+                                           get_flash_attn_version)
+>>>>>>> origin/features-based-on-v0.8.5.post1
 from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.logger import init_logger
 from vllm.utils import cdiv
@@ -142,9 +146,24 @@ def _get_sliding_window_configs(
     return sliding_window_configs
 
 
+<<<<<<< HEAD
 class FlashAttentionMetadataBuilder(
         AttentionMetadataBuilder[FlashAttentionMetadata]):
     full_cudagraph_supported: ClassVar[bool] = get_flash_attn_version() == 3
+=======
+def _get_sliding_window_configs(
+        vllm_config: VllmConfig) -> set[Optional[tuple[int, int]]]:
+    """Get the set of all sliding window configs used in the model."""
+    sliding_window_configs: set[Optional[tuple[int, int]]] = set()
+    layers = get_layers_from_vllm_config(vllm_config, Attention)
+    for layer in layers.values():
+        assert isinstance(layer.impl, FlashAttentionImpl)
+        sliding_window_configs.add(layer.impl.sliding_window)
+    return sliding_window_configs
+
+
+class FlashAttentionMetadataBuilder:
+>>>>>>> origin/features-based-on-v0.8.5.post1
 
     def __init__(self, kv_cache_spec: AttentionSpec, vllm_config: VllmConfig,
                  device: torch.device):
@@ -155,6 +174,7 @@ class FlashAttentionMetadataBuilder(
         self.compilation_config = vllm_config.compilation_config
         self.device = device
 
+<<<<<<< HEAD
         self.num_heads_q = self.model_config.get_num_attention_heads(
             self.parallel_config)
         self.num_heads_kv = self.model_config.get_num_kv_heads(
@@ -191,6 +211,24 @@ class FlashAttentionMetadataBuilder(
             # number of splits so that large enough intermediate buffers are
             # pre-allocated during capture.
             self.max_num_splits = _DEFAULT_MAX_NUM_SPLITS_FOR_CUDA_GRAPH
+=======
+        self.runner = runner
+        self.num_heads_q = model_config.get_num_attention_heads(
+            runner.parallel_config)
+        self.num_heads_kv = model_config.get_num_kv_heads(
+            runner.parallel_config)
+        self.headdim = model_config.get_head_size()
+        self.page_size = self.runner.block_size
+
+        self.aot_schedule = (get_flash_attn_version() == 3)
+        # Sliding window size to be used with the AOT scheduler will be
+        # populated on first build() call.
+        self.aot_sliding_window: Optional[tuple[int, int]] = None
+
+    def reorder_batch(self, input_batch: "InputBatch",
+                      scheduler_output: "SchedulerOutput") -> bool:
+        return False
+>>>>>>> origin/features-based-on-v0.8.5.post1
 
         # Sliding window size to be used with the AOT scheduler will be
         # populated on first build() call.
@@ -234,6 +272,22 @@ class FlashAttentionMetadataBuilder(
                     self.aot_schedule = False
                     aot_schedule = False
 
+        if self.aot_sliding_window is None:
+            self.aot_sliding_window = (-1, -1)
+            # For the AOT scheduler we need the sliding window value to be
+            # constant for all layers to. We have to populate this on the first
+            # build() call so the layers are constructed (cannot populate)
+            # in __init__.
+            if self.aot_schedule:
+                sliding_window_configs = _get_sliding_window_configs(
+                    self.runner.vllm_config)
+                if len(sliding_window_configs) == 1:
+                    sliding_window_config = sliding_window_configs.pop()
+                    if sliding_window_config is not None:
+                        self.aot_sliding_window = sliding_window_config
+                elif len(sliding_window_configs) > 1:
+                    self.aot_schedule = False
+
         def schedule(batch_size, cu_query_lens, max_query_len, seqlens,
                      max_seq_len, causal):
             if aot_schedule:
@@ -249,7 +303,10 @@ class FlashAttentionMetadataBuilder(
                     cu_seqlens_q=cu_query_lens,
                     causal=causal,
                     window_size=self.aot_sliding_window,
+<<<<<<< HEAD
                     num_splits=self.max_num_splits,
+=======
+>>>>>>> origin/features-based-on-v0.8.5.post1
                 )
             return None
 

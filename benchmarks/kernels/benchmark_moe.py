@@ -562,10 +562,15 @@ def get_weight_block_size_safety(config, default_value=None):
 def main(args: argparse.Namespace):
     print(args)
 
+<<<<<<< HEAD
     config = get_config(model=args.model, trust_remote_code=args.trust_remote_code)
     if args.model_prefix:
         config = getattr(config, args.model_prefix)
 
+=======
+    config = AutoConfig.from_pretrained(
+        args.model, trust_remote_code=args.trust_remote_code)
+>>>>>>> origin/features-based-on-v0.8.5.post1
     if config.architectures[0] == "DbrxForCausalLM":
         E = config.ffn_config.moe_num_experts
         topk = config.ffn_config.moe_top_k
@@ -585,7 +590,13 @@ def main(args: argparse.Namespace):
         topk = config.num_experts_per_tok
         intermediate_size = config.moe_intermediate_size
         shard_intermediate_size = 2 * intermediate_size // args.tp_size
+<<<<<<< HEAD
     elif config.architectures[0] in ("Qwen2MoeForCausalLM", "Qwen3MoeForCausalLM"):
+=======
+    elif config.architectures[0] in [
+            "Qwen2MoeForCausalLM", "Qwen3MoeForCausalLM"
+    ]:
+>>>>>>> origin/features-based-on-v0.8.5.post1
         E = config.num_experts
         topk = config.num_experts_per_tok
         intermediate_size = config.moe_intermediate_size

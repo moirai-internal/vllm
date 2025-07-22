@@ -1141,7 +1141,10 @@ def make_output(scheduler: Scheduler):
         spec_token_ids=None,
         logprobs=None,
         prompt_logprobs_dict={},
+<<<<<<< HEAD
         pooler_output=[],
+=======
+>>>>>>> origin/features-based-on-v0.8.5.post1
     )
 
 
@@ -1152,17 +1155,27 @@ def assert_scheduler_empty(scheduler: Scheduler):
     assert len(scheduler.waiting) == 0
     assert len(scheduler.running) == 0
     assert len(scheduler.finished_req_ids) == 0
+<<<<<<< HEAD
+=======
+    assert len(scheduler._cached_reqs_data) == 0
+>>>>>>> origin/features-based-on-v0.8.5.post1
 
     # EncoderCacheManager.
     assert len(scheduler.encoder_cache_manager.freed) == 0
     assert len(scheduler.encoder_cache_manager.cached) == 0
 
     # KVCache Manager.
+<<<<<<< HEAD
     assert len(scheduler.kv_cache_manager.coordinator.single_type_managers[0].
                req_to_blocks) == 0
     assert len(scheduler.kv_cache_manager.req_to_block_hashes) == 0
     assert len(scheduler.kv_cache_manager.coordinator.single_type_managers[0].
                num_cached_block) == 0
+=======
+    assert len(scheduler.kv_cache_manager.req_to_blocks) == 0
+    assert len(scheduler.kv_cache_manager.req_to_block_hashes) == 0
+    assert len(scheduler.kv_cache_manager.num_cached_block) == 0
+>>>>>>> origin/features-based-on-v0.8.5.post1
     num_free_blocks = (
         scheduler.kv_cache_manager.block_pool.free_block_queue.num_free_blocks)
     assert num_free_blocks == (
@@ -1207,6 +1220,7 @@ def test_memory_leak():
 
     # Confirm no memory leak.
     assert_scheduler_empty(scheduler)
+<<<<<<< HEAD
 
 
 def create_scheduler_with_priority(
@@ -1832,3 +1846,5 @@ def test_schedule_skip_tokenizer_init_structured_output_request():
     assert len(output.scheduled_new_reqs) == 0
     assert len(scheduler.running) == 0
     assert len(scheduler.waiting) == 1
+=======
+>>>>>>> origin/features-based-on-v0.8.5.post1

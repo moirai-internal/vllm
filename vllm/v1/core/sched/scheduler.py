@@ -883,8 +883,17 @@ class Scheduler(SchedulerInterface):
             # This is a rare case and unlikely to impact performance.
             self.waiting.remove_requests(stopped_preempted_reqs)
 
+<<<<<<< HEAD
         # KV Connector: update state for finished KV Transfers.
         self._update_from_kv_xfer_finished(model_runner_output)
+=======
+        # Return the cached request data to the queue so they can be reused.
+        for req_data in scheduler_output.scheduled_cached_reqs:
+            # NOTE(rob): since we free stopped reqs above, adding stopped reqs
+            # to _cached_reqs_data will cause a memory leak.
+            if req_data.req_id not in self.finished_req_ids:
+                self._cached_reqs_data[req_data.req_id].append(req_data)
+>>>>>>> origin/features-based-on-v0.8.5.post1
 
         # Create EngineCoreOutputs for all clients that have requests with
         # outputs in this step.
