@@ -281,4 +281,3 @@ class MultiModalProfiler(Generic[_I]):
         return self._get_mm_max_tokens(seq_len,
                                        mm_counts,
                                        mm_embeddings_only=False)
->>>>>>> 0e36abf99 ([Bugfix] Correct max tokens for non-contiguous embeds (#21798))
