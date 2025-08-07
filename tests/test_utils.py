@@ -957,6 +957,7 @@ def test_convert_ids_list_to_tokens():
     ]
     tokens = convert_ids_list_to_tokens(tokenizer, token_ids)
     assert tokens == ['Hello', ',', ' world', '!']
+<<<<<<< HEAD
 
 
 def test_current_stream_multithread():
@@ -995,3 +996,5 @@ def test_current_stream_multithread():
         child_thread.join(timeout=5)
         if child_thread.is_alive():
             pytest.fail("Child thread failed to exit properly")
+=======
+>>>>>>> origin/features-based-on-v0.9.2
