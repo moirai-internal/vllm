@@ -29,8 +29,8 @@ jobs:
           fi
           
           # Check if this is a release candidate or pre-release tag
-          # Skip tags with .rc, -rc, .alpha, -beta, etc.
-          if [[ "$TAG" =~ \.(rc|alpha|beta|pre|dev)[0-9]* ]] || [[ "$TAG" =~ -(rc|alpha|beta|pre|dev)[0-9]* ]]; then
+          # Skip tags with .rc, -rc, rc (no separator), .alpha, -beta, etc.
+          if [[ "$TAG" =~ [\.-]?(rc|alpha|beta|pre|dev)[0-9]*$ ]]; then
             echo "::notice::Skipping pre-release tag: $TAG"
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
             echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -87,7 +87,7 @@ jobs:
           for tag in $ALL_TAGS; do
             if [[ "$FOUND_CURRENT" == "true" ]]; then
               # Skip pre-release tags (same pattern as above)
-              if [[ "$tag" =~ \.(rc|alpha|beta|pre|dev)[0-9]* ]] || [[ "$tag" =~ -(rc|alpha|beta|pre|dev)[0-9]* ]]; then
+              if [[ "$tag" =~ [\.-]?(rc|alpha|beta|pre|dev)[0-9]*$ ]]; then
                 echo "Skipping pre-release tag: $tag"
                 continue
               fi
