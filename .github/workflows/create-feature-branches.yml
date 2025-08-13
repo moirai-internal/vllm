@@ -12,7 +12,39 @@ on:
         type: string
 
 jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: ${{ steps.check.outputs.is_prerelease }}
+      tag: ${{ steps.check.outputs.tag }}
+      branch_name: ${{ steps.check.outputs.branch_name }}
+    steps:
+      - name: Check if tag is pre-release
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          # Check if this is a release candidate or pre-release tag
+          # Skip tags with .rc, -rc, rc (no separator), .alpha, -beta, etc.
+          if [[ "$TAG" =~ [\.-]?(rc|alpha|beta|pre|dev)[0-9]*$ ]]; then
+            echo "::notice::Skipping pre-release tag: $TAG"
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "branch_name=" >> $GITHUB_OUTPUT
+          else
+            echo "::notice::Processing stable release tag: $TAG"
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "branch_name=features-based-on-$TAG" >> $GITHUB_OUTPUT
+          fi
+
   create-feature-branch:
+    needs: check-tag
+    if: needs.check-tag.outputs.is_prerelease == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,16 +62,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Get tag name
+      - name: Set tag variables
         id: get_tag
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "branch_name=features-based-on-$TAG" >> $GITHUB_OUTPUT
+          echo "tag=${{ needs.check-tag.outputs.tag }}" >> $GITHUB_OUTPUT
+          echo "branch_name=${{ needs.check-tag.outputs.branch_name }}" >> $GITHUB_OUTPUT
 
       - name: Find previous tag with existing branch
         id: previous_tag
@@ -59,6 +86,12 @@ jobs:
           
           for tag in $ALL_TAGS; do
             if [[ "$FOUND_CURRENT" == "true" ]]; then
+              # Skip pre-release tags (same pattern as above)
+              if [[ "$tag" =~ [\.-]?(rc|alpha|beta|pre|dev)[0-9]*$ ]]; then
+                echo "Skipping pre-release tag: $tag"
+                continue
+              fi
+              
               # This is a previous tag, check if it has a feature branch
               CANDIDATE_BRANCH="features-based-on-$tag"
               echo "Checking if branch exists for tag $tag: $CANDIDATE_BRANCH"
