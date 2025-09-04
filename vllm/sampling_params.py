@@ -533,6 +533,29 @@ class SamplingParams(
         return copy.deepcopy(self, memo=logit_processor_refs)
 
     def __repr__(self) -> str:
+        # Create a safe representation of guided_decoding that doesn't expose sensitive content
+        guided_decoding_repr = None
+        if self.guided_decoding is not None:
+            # Only show the type of guided decoding, not the actual content
+            guided_types = []
+            if self.guided_decoding.json is not None:
+                guided_types.append("json")
+            if self.guided_decoding.regex is not None:
+                guided_types.append("regex")
+            if self.guided_decoding.choice is not None:
+                guided_types.append("choice")
+            if self.guided_decoding.grammar is not None:
+                guided_types.append("grammar")
+            if self.guided_decoding.json_object is not None:
+                guided_types.append("json_object")
+            if self.guided_decoding.structural_tag is not None:
+                guided_types.append("structural_tag")
+            
+            if guided_types:
+                guided_decoding_repr = f"GuidedDecodingParams(types={guided_types})"
+            else:
+                guided_decoding_repr = "GuidedDecodingParams()"
+        
         return (
             f"SamplingParams(n={self.n}, "
             f"presence_penalty={self.presence_penalty}, "
@@ -556,7 +579,7 @@ class SamplingParams(
             "spaces_between_special_tokens="
             f"{self.spaces_between_special_tokens}, "
             f"truncate_prompt_tokens={self.truncate_prompt_tokens}, "
-            f"guided_decoding={self.guided_decoding}, "
+            f"guided_decoding={guided_decoding_repr}, "
             f"extra_args={self.extra_args})")
 
 
