@@ -20,6 +20,7 @@ from vllm.logger import (_DATE_FORMAT, _FORMAT, _configure_vllm_root_logger,
                          enable_trace_function_call, init_logger)
 from vllm.logging_utils import NewLineFormatter
 from vllm.logging_utils.dump_input import prepare_object_to_dump
+from vllm.sampling_params import SamplingParams, GuidedDecodingParams
 
 
 def f1(x):
@@ -497,3 +498,219 @@ def test_streaming_complete_logs_full_text_content():
         assert call_args[1] == "test-streaming-full-text"
         assert call_args[2] == " (streaming complete)"
         assert call_args[5] == "streaming_complete"
+
+
+def test_request_logger_log_inputs_guided_decoding_privacy_protection():
+    """Test that RequestLogger.log_inputs() protects sensitive guided decoding content."""
+    mock_logger = MagicMock()
+
+    with patch("vllm.entrypoints.logger.logger", mock_logger):
+        request_logger = RequestLogger(max_log_len=None)
+
+        # Create sampling params with sensitive guided decoding content
+        sensitive_schema = {
+            "name": "analyze_image",
+            "description": "Pull out information from image.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "Description": {
+                            "type": "string",
+                            "description": "Generate a narrative-style description of the image. Example: Photograph of US President Donald Trump and North Korean leader Kim Jong Un in formal attire shaking hands."
+                        },
+                        "People": {
+                            "type": "array",
+                            "description": "Identify people in the image. Examples: [\"Iranian Supreme Leader Ali Khamenei\", \"large group of people\"]",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["Description", "People"]
+                }
+            }
+        }
+
+        guided_params = GuidedDecodingParams(json=sensitive_schema)
+        sampling_params = SamplingParams(
+            temperature=1.0,
+            max_tokens=4000,
+            guided_decoding=guided_params
+        )
+
+        # Log inputs with sensitive guided decoding
+        request_logger.log_inputs(
+            request_id="test-privacy-123",
+            prompt="Test prompt",
+            prompt_token_ids=[1, 2, 3, 4, 5],
+            prompt_embeds=None,
+            params=sampling_params,
+            lora_request=None
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args.args
+        log_message = call_args[0]
+        logged_params = call_args[2]
+
+        # Check that sensitive content is not in the logged message
+        sensitive_phrases = ["Donald Trump", "Kim Jong Un", "Ali Khamenei", "Islamic cleric"]
+        for phrase in sensitive_phrases:
+            assert phrase not in log_message, f"Sensitive phrase '{phrase}' found in log message!"
+            assert phrase not in str(logged_params), f"Sensitive phrase '{phrase}' found in logged params!"
+
+        # Check that guided decoding type information is present
+        assert "guided_decoding=GuidedDecodingParams(types=['json'])" in str(logged_params)
+        assert "narrative-style description" not in str(logged_params)
+
+
+def test_request_logger_log_inputs_regex_privacy_protection():
+    """Test that RequestLogger.log_inputs() protects sensitive regex patterns."""
+    mock_logger = MagicMock()
+
+    with patch("vllm.entrypoints.logger.logger", mock_logger):
+        request_logger = RequestLogger(max_log_len=None)
+
+        # Create sampling params with sensitive regex
+        sensitive_regex = r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$"
+        guided_params = GuidedDecodingParams(regex=sensitive_regex)
+        sampling_params = SamplingParams(
+            temperature=0.8,
+            max_tokens=100,
+            guided_decoding=guided_params
+        )
+
+        # Log inputs with sensitive regex
+        request_logger.log_inputs(
+            request_id="test-regex-privacy-456",
+            prompt="Generate a password",
+            prompt_token_ids=[10, 20, 30],
+            prompt_embeds=None,
+            params=sampling_params,
+            lora_request=None
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args.args
+        logged_params = call_args[2]
+
+        # Check that sensitive regex is not in the logged params
+        assert sensitive_regex not in str(logged_params)
+        assert "guided_decoding=GuidedDecodingParams(types=['regex'])" in str(logged_params)
+
+
+def test_request_logger_log_inputs_choice_privacy_protection():
+    """Test that RequestLogger.log_inputs() protects sensitive choice lists."""
+    mock_logger = MagicMock()
+
+    with patch("vllm.entrypoints.logger.logger", mock_logger):
+        request_logger = RequestLogger(max_log_len=None)
+
+        # Create sampling params with sensitive choices
+        sensitive_choices = [
+            "confidential_option_1",
+            "secret_choice_2", 
+            "private_selection_3"
+        ]
+        guided_params = GuidedDecodingParams(choice=sensitive_choices)
+        sampling_params = SamplingParams(
+            temperature=0.5,
+            max_tokens=50,
+            guided_decoding=guided_params
+        )
+
+        # Log inputs with sensitive choices
+        request_logger.log_inputs(
+            request_id="test-choice-privacy-789",
+            prompt="Select an option",
+            prompt_token_ids=[5, 6, 7],
+            prompt_embeds=None,
+            params=sampling_params,
+            lora_request=None
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args.args
+        logged_params = call_args[2]
+
+        # Check that sensitive choices are not in the logged params
+        for choice in sensitive_choices:
+            assert choice not in str(logged_params), f"Sensitive choice '{choice}' found in logged params!"
+
+        assert "guided_decoding=GuidedDecodingParams(types=['choice'])" in str(logged_params)
+
+
+def test_request_logger_log_inputs_grammar_privacy_protection():
+    """Test that RequestLogger.log_inputs() protects sensitive grammar definitions."""
+    mock_logger = MagicMock()
+
+    with patch("vllm.entrypoints.logger.logger", mock_logger):
+        request_logger = RequestLogger(max_log_len=None)
+
+        # Create sampling params with sensitive grammar
+        sensitive_grammar = """
+        start: expression
+        expression: "SELECT" column "FROM" table "WHERE" condition
+        column: "id" | "name" | "email" | "password"
+        table: "users" | "admin" | "sensitive_data"
+        condition: "id" "=" number
+        number: /\d+/
+        """
+        guided_params = GuidedDecodingParams(grammar=sensitive_grammar)
+        sampling_params = SamplingParams(
+            temperature=0.7,
+            max_tokens=200,
+            guided_decoding=guided_params
+        )
+
+        # Log inputs with sensitive grammar
+        request_logger.log_inputs(
+            request_id="test-grammar-privacy-111",
+            prompt="Generate SQL query",
+            prompt_token_ids=[1, 2, 3, 4],
+            prompt_embeds=None,
+            params=sampling_params,
+            lora_request=None
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args.args
+        logged_params = call_args[2]
+
+        # Check that sensitive grammar content is not in the logged params
+        sensitive_content = ["password", "admin", "sensitive_data", "SELECT", "FROM", "WHERE"]
+        for content in sensitive_content:
+            assert content not in str(logged_params), f"Sensitive content '{content}' found in logged params!"
+
+        assert "guided_decoding=GuidedDecodingParams(types=['grammar'])" in str(logged_params)
+
+
+def test_request_logger_log_inputs_no_guided_decoding():
+    """Test that RequestLogger.log_inputs() works correctly without guided decoding."""
+    mock_logger = MagicMock()
+
+    with patch("vllm.entrypoints.logger.logger", mock_logger):
+        request_logger = RequestLogger(max_log_len=None)
+
+        # Create normal sampling params without guided decoding
+        sampling_params = SamplingParams(
+            temperature=1.0,
+            max_tokens=100,
+            top_p=0.9
+        )
+
+        # Log inputs without guided decoding
+        request_logger.log_inputs(
+            request_id="test-normal-000",
+            prompt="Normal prompt",
+            prompt_token_ids=[1, 2, 3],
+            prompt_embeds=None,
+            params=sampling_params,
+            lora_request=None
+        )
+
+        mock_logger.info.assert_called_once()
+        call_args = mock_logger.info.call_args.args
+        logged_params = call_args[2]
+
+        # Check that guided_decoding=None is in the logged params
+        assert "guided_decoding=None" in str(logged_params)
