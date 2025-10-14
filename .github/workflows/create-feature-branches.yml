@@ -19,9 +19,6 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       branch_name: ${{ steps.check.outputs.branch_name }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
       - name: Check if tag should be processed
         id: check
         run: |
@@ -33,9 +30,10 @@ jobs:
           
           # Check if this is a pre-release tag
           SKIP_CREATION=false
-          BASE_VERSION=$(./tools/extract_base_version.sh "$TAG")
+          # Extract base version (e.g., v0.10.0 from v0.10.0rc1)
+          BASE_VERSION=$(echo "$TAG" | sed -E 's/[\.-]?(rc|alpha|beta|pre|dev)[0-9]*$//')
           
-          if [[ "$BASE_VERSION" != "$TAG" ]]; then
+          if [[ "$TAG" != "$BASE_VERSION" ]]; then
             # This is a pre-release tag (base version differs from tag)
             # Check if corresponding full release exists
             if git ls-remote --tags https://${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git | grep -q "refs/tags/$BASE_VERSION$"; then
@@ -103,9 +101,10 @@ jobs:
           for tag in $ALL_TAGS; do
             if [[ "$FOUND_CURRENT" == "true" ]]; then
               # Check if this is a pre-release tag
-              BASE_VERSION=$(./tools/extract_base_version.sh "$tag")
+              # Extract base version (e.g., v0.10.0 from v0.10.0rc1)
+              BASE_VERSION=$(bash tools/extract_base_version.sh "$tag")
               
-              if [[ "$BASE_VERSION" != "$tag" ]]; then
+              if [[ "$tag" != "$BASE_VERSION" ]]; then
                 # This is a pre-release tag (base version differs from tag)
                 # Check if corresponding full release exists
                 if git ls-remote --tags origin | grep -q "refs/tags/$BASE_VERSION$"; then
