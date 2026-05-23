@@ -109,7 +109,10 @@ jobs:
 
             if [ -z "$origin_sha" ]; then
               echo "Inspecting new upstream tag: $tag"
-              git fetch --no-tags upstream "$ref:$ref"
+              if ! git fetch --no-tags upstream "$ref:$ref"; then
+                echo "::warning::Skipping tag $tag because it could not be fetched from upstream"
+                continue
+              fi
               tag_created=$(git for-each-ref --format='%(creatordate:iso-strict)' "$ref")
               tag_created_epoch=$(git for-each-ref --format='%(creatordate:unix)' "$ref")
 
@@ -125,10 +128,14 @@ jobs:
                 continue
               fi
 
-              git push origin "$ref"
+              if ! git push origin "$ref"; then
+                echo "::warning::Skipping tag $tag because it could not be pushed to origin"
+                git tag -d "$tag"
+                continue
+              fi
               echo "$tag" >> "$NEW_TAGS_FILE"
             elif [ "$origin_sha" != "$upstream_sha" ]; then
-              echo "::warning::Skipping tag $tag because origin ($origin_sha) differs from upstream ($upstream_sha)"
+              echo "::warning::Skipping tag $tag because origin ($origin_sha) differs from upstream ($upstream_sha); reconcile this tag manually if upstream should be authoritative"
             fi
           done < "$UPSTREAM_TAGS"
 
