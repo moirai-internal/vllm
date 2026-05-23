@@ -94,19 +94,48 @@ jobs:
         if: steps.sync_main.outcome == 'success' || steps.sync_main.outcome == 'failure'
         id: sync_tags
         run: |
-          # Fetch tags from upstream
-          git fetch upstream --tags
+          UPSTREAM_TAGS=$(mktemp)
+          ORIGIN_TAGS=$(mktemp)
+          NEW_TAGS_FILE=$(mktemp)
+          trap 'rm -f "$UPSTREAM_TAGS" "$ORIGIN_TAGS" "$NEW_TAGS_FILE"' EXIT
+          TAG_SYNC_NOT_BEFORE_EPOCH=1779494400 # 2026-05-23T00:00:00Z
 
-          # Get list of new tags before pushing
-          NEW_TAGS=$(git tag --list | grep -v -F -f <(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||') || true)
+          git ls-remote --tags upstream | awk '!/\^\{\}$/ {print $1, $2}' > "$UPSTREAM_TAGS"
+          git ls-remote --tags origin | awk '!/\^\{\}$/ {print $1, $2}' > "$ORIGIN_TAGS"
 
-          # Push tags to origin
-          git push origin --tags
+          while read -r upstream_sha ref; do
+            tag="${ref#refs/tags/}"
+            origin_sha=$(awk -v ref="$ref" '$2 == ref {print $1}' "$ORIGIN_TAGS")
+
+            if [ -z "$origin_sha" ]; then
+              echo "Inspecting new upstream tag: $tag"
+              git fetch --no-tags upstream "$ref:$ref"
+              tag_created=$(git for-each-ref --format='%(creatordate:iso-strict)' "$ref")
+              tag_created_epoch=$(git for-each-ref --format='%(creatordate:unix)' "$ref")
+
+              if [ -z "$tag_created_epoch" ]; then
+                echo "::warning::Skipping tag $tag because its creation date could not be determined"
+                git tag -d "$tag"
+                continue
+              fi
+
+              if [ "$tag_created_epoch" -lt "$TAG_SYNC_NOT_BEFORE_EPOCH" ]; then
+                echo "::notice::Skipping old upstream tag $tag from $tag_created to avoid backfilling historical tags"
+                git tag -d "$tag"
+                continue
+              fi
+
+              git push origin "$ref"
+              echo "$tag" >> "$NEW_TAGS_FILE"
+            elif [ "$origin_sha" != "$upstream_sha" ]; then
+              echo "::warning::Skipping tag $tag because origin ($origin_sha) differs from upstream ($upstream_sha)"
+            fi
+          done < "$UPSTREAM_TAGS"
 
           # Save new tags for next step
-          if [ -n "$NEW_TAGS" ]; then
+          if [ -s "$NEW_TAGS_FILE" ]; then
             echo "new_tags<<EOF" >> $GITHUB_OUTPUT
-            echo "$NEW_TAGS" >> $GITHUB_OUTPUT
+            cat "$NEW_TAGS_FILE" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
             echo "has_new_tags=true" >> $GITHUB_OUTPUT
           else
@@ -130,4 +159,3 @@ jobs:
           done <<< "$NEW_TAGS"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
-
