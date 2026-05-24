@@ -43,11 +43,11 @@ jobs:
           BEHIND_COUNT=$(git rev-list --count HEAD..upstream/main)
           if [ "$BEHIND_COUNT" -eq 0 ]; then
             echo "Already up to date with upstream. No sync needed."
-            echo "sync_needed=false" >> $GITHUB_OUTPUT
+            echo "sync_needed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "sync_needed=true" >> $GITHUB_OUTPUT
+          echo "sync_needed=true" >> "$GITHUB_OUTPUT"
           echo "Found $BEHIND_COUNT commits behind upstream"
 
           git rebase upstream/main || {
@@ -94,23 +94,52 @@ jobs:
         if: steps.sync_main.outcome == 'success' || steps.sync_main.outcome == 'failure'
         id: sync_tags
         run: |
-          # Fetch tags from upstream
-          git fetch upstream --tags
+          UPSTREAM_TAGS=$(mktemp)
+          ORIGIN_TAGS=$(mktemp)
+          NEW_TAGS_FILE=$(mktemp)
+          trap 'rm -f "$UPSTREAM_TAGS" "$ORIGIN_TAGS" "$NEW_TAGS_FILE"' EXIT
+          TAG_SYNC_MIN_VERSION="v0.21.0"
 
-          # Get list of new tags before pushing
-          NEW_TAGS=$(git tag --list | grep -v -F -f <(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||') || true)
+          git ls-remote --tags upstream | awk '!/\^\{\}$/ {print $1, $2}' > "$UPSTREAM_TAGS"
+          git ls-remote --tags origin | awk '!/\^\{\}$/ {print $1, $2}' > "$ORIGIN_TAGS"
 
-          # Push tags to origin
-          git push origin --tags
+          while read -r upstream_sha ref; do
+            tag="${ref#refs/tags/}"
+            origin_sha=$(awk -v ref="$ref" '$2 == ref {print $1}' "$ORIGIN_TAGS")
+
+            if [ -z "$origin_sha" ]; then
+              earliest_tag=$(printf '%s\n%s\n' "$tag" "$TAG_SYNC_MIN_VERSION" | sort -V | head -n1)
+              if [ "$earliest_tag" != "$TAG_SYNC_MIN_VERSION" ]; then
+                echo "::notice::Skipping historical upstream tag $tag before $TAG_SYNC_MIN_VERSION to avoid backfilling old tags"
+                continue
+              fi
+
+              echo "Inspecting new upstream tag: $tag"
+              if ! git fetch --no-tags upstream "$ref:$ref"; then
+                echo "::warning::Skipping tag $tag because it could not be fetched from upstream"
+                continue
+              fi
+
+              if ! git push origin "$ref"; then
+                echo "::warning::Skipping tag $tag because it could not be pushed to origin"
+                git tag -d "$tag"
+                continue
+              fi
+              echo "$tag" >> "$NEW_TAGS_FILE"
+            elif [ "$origin_sha" != "$upstream_sha" ]; then
+              echo "::warning::Skipping tag $tag because origin ($origin_sha) differs from upstream ($upstream_sha); reconcile this tag manually if upstream should be authoritative"
+            fi
+          done < "$UPSTREAM_TAGS"
 
           # Save new tags for next step
-          if [ -n "$NEW_TAGS" ]; then
-            echo "new_tags<<EOF" >> $GITHUB_OUTPUT
-            echo "$NEW_TAGS" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            echo "has_new_tags=true" >> $GITHUB_OUTPUT
+          if [ -s "$NEW_TAGS_FILE" ]; then
+            # shellcheck disable=SC2129
+            echo "new_tags<<EOF" >> "$GITHUB_OUTPUT"
+            cat "$NEW_TAGS_FILE" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "has_new_tags=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_new_tags=false" >> $GITHUB_OUTPUT
+            echo "has_new_tags=false" >> "$GITHUB_OUTPUT"
           fi
         continue-on-error: true
 
@@ -124,10 +153,9 @@ jobs:
             if [[ "$tag" =~ ^v[0-9] ]]; then
               echo "Triggering feature branch creation for tag: $tag"
               gh workflow run create-feature-branches.yml \
-                --repo ${{ github.repository }} \
+                --repo "${{ github.repository }}" \
                 --field tag="$tag"
             fi
           done <<< "$NEW_TAGS"
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
-

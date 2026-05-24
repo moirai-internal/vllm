@@ -36,7 +36,7 @@ jobs:
           if [[ "$TAG" != "$BASE_VERSION" ]]; then
             # This is a pre-release tag (base version differs from tag)
             # Check if corresponding full release exists
-            if git ls-remote --tags https://${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git | grep -q "refs/tags/$BASE_VERSION$"; then
+            if git ls-remote --tags "https://${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" | grep -q "refs/tags/$BASE_VERSION$"; then
               echo "::notice::Skipping pre-release tag $TAG because full release $BASE_VERSION exists"
               SKIP_CREATION=true
             else
@@ -47,13 +47,14 @@ jobs:
           fi
           
           # Set outputs based on whether we should skip
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          # shellcheck disable=SC2129
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [[ "$SKIP_CREATION" == "true" ]]; then
-            echo "skip_feature_branch_creation=true" >> $GITHUB_OUTPUT
-            echo "branch_name=" >> $GITHUB_OUTPUT
+            echo "skip_feature_branch_creation=true" >> "$GITHUB_OUTPUT"
+            echo "branch_name=" >> "$GITHUB_OUTPUT"
           else
-            echo "skip_feature_branch_creation=false" >> $GITHUB_OUTPUT
-            echo "branch_name=features-based-on-$TAG" >> $GITHUB_OUTPUT
+            echo "skip_feature_branch_creation=false" >> "$GITHUB_OUTPUT"
+            echo "branch_name=features-based-on-$TAG" >> "$GITHUB_OUTPUT"
           fi
 
   create-feature-branch:
@@ -79,8 +80,9 @@ jobs:
       - name: Set tag variables
         id: get_tag
         run: |
-          echo "tag=${{ needs.check-tag.outputs.tag }}" >> $GITHUB_OUTPUT
-          echo "branch_name=${{ needs.check-tag.outputs.branch_name }}" >> $GITHUB_OUTPUT
+          # shellcheck disable=SC2129
+          echo "tag=${{ needs.check-tag.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "branch_name=${{ needs.check-tag.outputs.branch_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Find previous tag with existing branch
         id: previous_tag
@@ -98,7 +100,7 @@ jobs:
           echo "Searching for previous tag with existing feature branch..."
           echo "Current tag: $CURRENT_TAG"
           
-          for tag in $ALL_TAGS; do
+          while IFS= read -r tag; do
             if [[ "$FOUND_CURRENT" == "true" ]]; then
               # Check if this is a pre-release tag
               # Extract base version (e.g., v0.10.0 from v0.10.0rc1)
@@ -131,18 +133,20 @@ jobs:
               FOUND_CURRENT=true
               echo "Found current tag position in list"
             fi
-          done
+          done <<< "$ALL_TAGS"
           
           if [[ -z "$PREVIOUS_TAG_WITH_BRANCH" ]]; then
             echo "No previous tag with existing feature branch found"
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "tag=" >> $GITHUB_OUTPUT
-            echo "branch_name=" >> $GITHUB_OUTPUT
+            # shellcheck disable=SC2129
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "branch_name=" >> "$GITHUB_OUTPUT"
           else
             echo "Found previous tag with branch: $PREVIOUS_TAG_WITH_BRANCH"
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "tag=$PREVIOUS_TAG_WITH_BRANCH" >> $GITHUB_OUTPUT
-            echo "branch_name=$PREVIOUS_BRANCH_NAME" >> $GITHUB_OUTPUT
+            # shellcheck disable=SC2129
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$PREVIOUS_TAG_WITH_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "branch_name=$PREVIOUS_BRANCH_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check if current branch already exists
@@ -150,10 +154,10 @@ jobs:
         run: |
           BRANCH_NAME="${{ steps.get_tag.outputs.branch_name }}"
           if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Branch $BRANCH_NAME already exists"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Branch $BRANCH_NAME does not exist"
           fi
 
@@ -172,15 +176,17 @@ jobs:
           
           if [[ -z "$COMMITS" ]]; then
             echo "No commits to cherry-pick"
-            echo "has_commits=false" >> $GITHUB_OUTPUT
-            echo "commits=" >> $GITHUB_OUTPUT
+            # shellcheck disable=SC2129
+            echo "has_commits=false" >> "$GITHUB_OUTPUT"
+            echo "commits=" >> "$GITHUB_OUTPUT"
           else
             echo "Commits to cherry-pick:"
             echo "$COMMITS"
-            echo "has_commits=true" >> $GITHUB_OUTPUT
             # Convert newlines to spaces for GitHub Actions
             COMMITS_ONELINE=$(echo "$COMMITS" | tr '\n' ' ')
-            echo "commits=$COMMITS_ONELINE" >> $GITHUB_OUTPUT
+            # shellcheck disable=SC2129
+            echo "has_commits=true" >> "$GITHUB_OUTPUT"
+            echo "commits=$COMMITS_ONELINE" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create feature branch
@@ -206,7 +212,7 @@ jobs:
           
           # Try cherry-picking commits
           CONFLICT_OCCURRED=false
-          for commit in $COMMITS; do
+          while IFS= read -r commit; do
             echo "Cherry-picking commit: $commit"
             if ! git cherry-pick "$commit"; then
               echo "Conflict occurred while cherry-picking $commit"
@@ -215,13 +221,13 @@ jobs:
               git cherry-pick --abort
               break
             fi
-          done
+          done < <(tr ' ' '\n' <<< "$COMMITS")
           
           if [[ "$CONFLICT_OCCURRED" == "true" ]]; then
-            echo "conflict=true" >> $GITHUB_OUTPUT
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
             echo "Conflicts detected during cherry-pick"
           else
-            echo "conflict=false" >> $GITHUB_OUTPUT
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
             echo "All commits cherry-picked successfully"
           fi
 
@@ -240,7 +246,7 @@ jobs:
           git push origin "$PR_BRANCH"
           
           # Create PR using GitHub CLI or API
-          COMMIT_LIST_MD=$(echo $COMMITS | tr ' ' '\n' | while read commit; do echo "- $commit"; done)
+          COMMIT_LIST_MD=$(tr ' ' '\n' <<< "$COMMITS" | while IFS= read -r commit; do echo "- $commit"; done)
           
           # Create PR body content
           PR_BODY="## Cherry-pick: $PREVIOUS_BRANCH_NAME → $BRANCH_NAME
@@ -258,7 +264,7 @@ jobs:
             --title "Cherry-pick: $PREVIOUS_BRANCH_NAME → $BRANCH_NAME" \
             --body "$PR_BODY" \
             --base "$BRANCH_NAME" \
-            --head "$CONFLICT_BRANCH" \
+            --head "$PR_BRANCH" \
             --reviewer "CatherineSue,shenoyvvarun,slin1237,YouNeedCryDear,upfixer,key4ng"
         env:
           GH_TOKEN: ${{ secrets.ORG_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
@@ -277,7 +283,7 @@ jobs:
           git checkout -b "$CONFLICT_BRANCH" "$BRANCH_NAME"
           
           # Create an empty commit to establish the branch and enable PR creation
-          COMMIT_LIST=$(echo $COMMITS | tr ' ' '\n' | while read commit; do git log --oneline -1 $commit 2>/dev/null || echo $commit; done)
+          COMMIT_LIST=$(tr ' ' '\n' <<< "$COMMITS" | while IFS= read -r commit; do git log --oneline -1 "$commit" 2>/dev/null || echo "$commit"; done)
           
           # Now attempt the merge - conflicts will be left in proper Git state
           if ! git merge origin/"$PREVIOUS_BRANCH_NAME" --no-ff -m "Cherry-pick commits from $PREVIOUS_BRANCH_NAME"; then
@@ -308,7 +314,7 @@ jobs:
           fi
           
           # Create PR using GitHub CLI or API
-          COMMIT_LIST_MD=$(echo $COMMITS | tr ' ' '\n' | while read commit; do echo "- $commit"; done)
+          COMMIT_LIST_MD=$(tr ' ' '\n' <<< "$COMMITS" | while IFS= read -r commit; do echo "- $commit"; done)
           
           # Create PR body content
           PR_BODY="## 🚧 Cherry-pick Conflicts Need Resolution
