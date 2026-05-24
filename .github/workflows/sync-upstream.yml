@@ -98,7 +98,7 @@ jobs:
           ORIGIN_TAGS=$(mktemp)
           NEW_TAGS_FILE=$(mktemp)
           trap 'rm -f "$UPSTREAM_TAGS" "$ORIGIN_TAGS" "$NEW_TAGS_FILE"' EXIT
-          TAG_SYNC_MIN_VERSION="v0.22.0"
+          TAG_SYNC_MIN_VERSION="v0.21.0"
 
           git ls-remote --tags upstream | awk '!/\^\{\}$/ {print $1, $2}' > "$UPSTREAM_TAGS"
           git ls-remote --tags origin | awk '!/\^\{\}$/ {print $1, $2}' > "$ORIGIN_TAGS"
