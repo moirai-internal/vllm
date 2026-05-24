@@ -47,17 +47,14 @@ jobs:
           fi
           
           # Set outputs based on whether we should skip
+          # shellcheck disable=SC2129
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [[ "$SKIP_CREATION" == "true" ]]; then
-            {
-              echo "skip_feature_branch_creation=true"
-              echo "branch_name="
-            } >> "$GITHUB_OUTPUT"
+            echo "skip_feature_branch_creation=true" >> "$GITHUB_OUTPUT"
+            echo "branch_name=" >> "$GITHUB_OUTPUT"
           else
-            {
-              echo "skip_feature_branch_creation=false"
-              echo "branch_name=features-based-on-$TAG"
-            } >> "$GITHUB_OUTPUT"
+            echo "skip_feature_branch_creation=false" >> "$GITHUB_OUTPUT"
+            echo "branch_name=features-based-on-$TAG" >> "$GITHUB_OUTPUT"
           fi
 
   create-feature-branch:
@@ -83,10 +80,9 @@ jobs:
       - name: Set tag variables
         id: get_tag
         run: |
-          {
-            echo "tag=${{ needs.check-tag.outputs.tag }}"
-            echo "branch_name=${{ needs.check-tag.outputs.branch_name }}"
-          } >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC2129
+          echo "tag=${{ needs.check-tag.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "branch_name=${{ needs.check-tag.outputs.branch_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Find previous tag with existing branch
         id: previous_tag
@@ -141,18 +137,16 @@ jobs:
           
           if [[ -z "$PREVIOUS_TAG_WITH_BRANCH" ]]; then
             echo "No previous tag with existing feature branch found"
-            {
-              echo "exists=false"
-              echo "tag="
-              echo "branch_name="
-            } >> "$GITHUB_OUTPUT"
+            # shellcheck disable=SC2129
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "branch_name=" >> "$GITHUB_OUTPUT"
           else
             echo "Found previous tag with branch: $PREVIOUS_TAG_WITH_BRANCH"
-            {
-              echo "exists=true"
-              echo "tag=$PREVIOUS_TAG_WITH_BRANCH"
-              echo "branch_name=$PREVIOUS_BRANCH_NAME"
-            } >> "$GITHUB_OUTPUT"
+            # shellcheck disable=SC2129
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$PREVIOUS_TAG_WITH_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "branch_name=$PREVIOUS_BRANCH_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check if current branch already exists
@@ -182,19 +176,17 @@ jobs:
           
           if [[ -z "$COMMITS" ]]; then
             echo "No commits to cherry-pick"
-            {
-              echo "has_commits=false"
-              echo "commits="
-            } >> "$GITHUB_OUTPUT"
+            # shellcheck disable=SC2129
+            echo "has_commits=false" >> "$GITHUB_OUTPUT"
+            echo "commits=" >> "$GITHUB_OUTPUT"
           else
             echo "Commits to cherry-pick:"
             echo "$COMMITS"
             # Convert newlines to spaces for GitHub Actions
             COMMITS_ONELINE=$(echo "$COMMITS" | tr '\n' ' ')
-            {
-              echo "has_commits=true"
-              echo "commits=$COMMITS_ONELINE"
-            } >> "$GITHUB_OUTPUT"
+            # shellcheck disable=SC2129
+            echo "has_commits=true" >> "$GITHUB_OUTPUT"
+            echo "commits=$COMMITS_ONELINE" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create feature branch

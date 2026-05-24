@@ -133,12 +133,11 @@ jobs:
 
           # Save new tags for next step
           if [ -s "$NEW_TAGS_FILE" ]; then
-            {
-              echo "new_tags<<EOF"
-              cat "$NEW_TAGS_FILE"
-              echo "EOF"
-              echo "has_new_tags=true"
-            } >> "$GITHUB_OUTPUT"
+            # shellcheck disable=SC2129
+            echo "new_tags<<EOF" >> "$GITHUB_OUTPUT"
+            cat "$NEW_TAGS_FILE" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "has_new_tags=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_new_tags=false" >> "$GITHUB_OUTPUT"
           fi
