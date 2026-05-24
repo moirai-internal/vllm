@@ -140,6 +140,7 @@ extend-ignore-identifiers-re = [".*[Uu][Ee][0-9][Mm][0-9].*"]
 bbc5b7ede = "bbc5b7ede"
 NOOPs = "NOOPs"
 nin_shortcut = "nin_shortcut"
+slin1237 = "slin1237"
 cudaDevAttrMaxSharedMemoryPerBlockOptin = "cudaDevAttrMaxSharedMemoryPerBlockOptin"
 
 depthwise_seperable_out_channel = "depthwise_seperable_out_channel"

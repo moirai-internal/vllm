@@ -43,11 +43,11 @@ jobs:
           BEHIND_COUNT=$(git rev-list --count HEAD..upstream/main)
           if [ "$BEHIND_COUNT" -eq 0 ]; then
             echo "Already up to date with upstream. No sync needed."
-            echo "sync_needed=false" >> $GITHUB_OUTPUT
+            echo "sync_needed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "sync_needed=true" >> $GITHUB_OUTPUT
+          echo "sync_needed=true" >> "$GITHUB_OUTPUT"
           echo "Found $BEHIND_COUNT commits behind upstream"
 
           git rebase upstream/main || {
@@ -141,12 +141,14 @@ jobs:
 
           # Save new tags for next step
           if [ -s "$NEW_TAGS_FILE" ]; then
-            echo "new_tags<<EOF" >> $GITHUB_OUTPUT
-            cat "$NEW_TAGS_FILE" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            echo "has_new_tags=true" >> $GITHUB_OUTPUT
+            {
+              echo "new_tags<<EOF"
+              cat "$NEW_TAGS_FILE"
+              echo "EOF"
+              echo "has_new_tags=true"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "has_new_tags=false" >> $GITHUB_OUTPUT
+            echo "has_new_tags=false" >> "$GITHUB_OUTPUT"
           fi
         continue-on-error: true
 
@@ -160,7 +162,7 @@ jobs:
             if [[ "$tag" =~ ^v[0-9] ]]; then
               echo "Triggering feature branch creation for tag: $tag"
               gh workflow run create-feature-branches.yml \
-                --repo ${{ github.repository }} \
+                --repo "${{ github.repository }}" \
                 --field tag="$tag"
             fi
           done <<< "$NEW_TAGS"
