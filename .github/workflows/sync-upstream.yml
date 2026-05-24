@@ -98,7 +98,7 @@ jobs:
           ORIGIN_TAGS=$(mktemp)
           NEW_TAGS_FILE=$(mktemp)
           trap 'rm -f "$UPSTREAM_TAGS" "$ORIGIN_TAGS" "$NEW_TAGS_FILE"' EXIT
-          TAG_SYNC_NOT_BEFORE_EPOCH=1779494400 # 2026-05-23T00:00:00Z
+          TAG_SYNC_MIN_VERSION="v0.22.0"
 
           git ls-remote --tags upstream | awk '!/\^\{\}$/ {print $1, $2}' > "$UPSTREAM_TAGS"
           git ls-remote --tags origin | awk '!/\^\{\}$/ {print $1, $2}' > "$ORIGIN_TAGS"
@@ -108,23 +108,15 @@ jobs:
             origin_sha=$(awk -v ref="$ref" '$2 == ref {print $1}' "$ORIGIN_TAGS")
 
             if [ -z "$origin_sha" ]; then
+              earliest_tag=$(printf '%s\n%s\n' "$tag" "$TAG_SYNC_MIN_VERSION" | sort -V | head -n1)
+              if [ "$earliest_tag" != "$TAG_SYNC_MIN_VERSION" ]; then
+                echo "::notice::Skipping historical upstream tag $tag before $TAG_SYNC_MIN_VERSION to avoid backfilling old tags"
+                continue
+              fi
+
               echo "Inspecting new upstream tag: $tag"
               if ! git fetch --no-tags upstream "$ref:$ref"; then
                 echo "::warning::Skipping tag $tag because it could not be fetched from upstream"
-                continue
-              fi
-              tag_created=$(git for-each-ref --format='%(creatordate:iso-strict)' "$ref")
-              tag_created_epoch=$(git for-each-ref --format='%(creatordate:unix)' "$ref")
-
-              if [ -z "$tag_created_epoch" ]; then
-                echo "::warning::Skipping tag $tag because its creation date could not be determined"
-                git tag -d "$tag"
-                continue
-              fi
-
-              if [ "$tag_created_epoch" -lt "$TAG_SYNC_NOT_BEFORE_EPOCH" ]; then
-                echo "::notice::Skipping old upstream tag $tag from $tag_created to avoid backfilling historical tags"
-                git tag -d "$tag"
                 continue
               fi
 
